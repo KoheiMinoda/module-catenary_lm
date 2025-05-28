@@ -968,18 +968,18 @@ void ModuleCatenaryLM::SetValue(
 // MBDyn のソルバーや他のモジュールが，この要素に関連付けられたノードの情報（位置・速度・力など）にアクセスしたり，ノードの状態を変更したりするために使用する
 // const 版：この関数自身が const であり，この関数を呼び出しても ModuleCatenaryLM オブジェクトの状態は変更されない
 const Node* ModuleCatenaryLM::pGetNode(unsigned int i) const {
-    if (i < N_nodes_param.size() && N_nodes_param[i] != 0) {
-        return N_nodes_param[i];
+    if (i == 0 || i > N_nodes_param.size() || N_nodes_param[i-1] == NULL) {
+        return NULL;
     }
-    return 0;
+    return N_nodes_param[i-1];
 }
 
 // 非 const 版：ノードの状態を変更することが可能
 Node* ModuleCatenaryLM::pGetNode(unsigned int i) {
-    if (i < N_nodes_param.size() && N_nodes_param[i] != 0) {
-        return N_nodes_param[i];
+    if (i == 0 || i > N_nodes_param.size() || N_nodes_param[i-1] == NULL) {
+        return NULL;
     }
-    return 0;
+    return N_nodes_param[i-1];
 }
 
 bool catenary_lm_set(void) {
