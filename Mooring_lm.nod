@@ -1,0 +1,363 @@
+structural : 50001, static,
+    reference, 50001, null,
+    reference, 50001, eye,
+    reference, 50001, null,
+    reference, 50001, null;
+
+structural : 50002, static,
+    reference, 50002, null,
+    reference, 50002, eye,
+    reference, 50002, null,
+    reference, 50002, null;
+
+structural : 50003, static,
+    reference, 50003, null,
+    reference, 50003, eye,
+    reference, 50003, null,
+    reference, 50003, null;
+
+structural : 50101, static,
+    reference, 50101, null,
+    reference, 50101, eye,
+    reference, 50101, null,
+    reference, 50101, null;
+
+structural : 50102, static,
+    reference, 50102, null,
+    reference, 50102, eye,
+    reference, 50102, null,
+    reference, 50102, null;
+
+structural : 50103, static,
+    reference, 50103, null,
+    reference, 50103, eye,
+    reference, 50103, null,
+    reference, 50103, null;
+
+structural : 50104, static,
+    reference, 50104, null,
+    reference, 50104, eye,
+    reference, 50104, null,
+    reference, 50104, null;
+
+structural : 50105, static,
+    reference, 50105, null,
+    reference, 50105, eye,
+    reference, 50105, null,
+    reference, 50105, null;
+
+structural : 50106, static,
+    reference, 50106, null,
+    reference, 50106, eye,
+    reference, 50106, null,
+    reference, 50106, null;
+
+structural : 50107, static,
+    reference, 50107, null,
+    reference, 50107, eye,
+    reference, 50107, null,
+    reference, 50107, null;
+
+structural : 50108, static,
+    reference, 50108, null,
+    reference, 50108, eye,
+    reference, 50108, null,
+    reference, 50108, null;
+
+structural : 50109, static,
+    reference, 50109, null,
+    reference, 50109, eye,
+    reference, 50109, null,
+    reference, 50109, null;
+
+structural : 50110, static,
+    reference, 50110, null,
+    reference, 50110, eye,
+    reference, 50110, null,
+    reference, 50110, null;
+
+structural : 50111, static,
+    reference, 50111, null,
+    reference, 50111, eye,
+    reference, 50111, null,
+    reference, 50111, null;
+
+structural : 50112, static,
+    reference, 50112, null,
+    reference, 50112, eye,
+    reference, 50112, null,
+    reference, 50112, null;
+
+structural : 50113, static,
+    reference, 50113, null,
+    reference, 50113, eye,
+    reference, 50113, null,
+    reference, 50113, null;
+
+structural : 50114, static,
+    reference, 50114, null,
+    reference, 50114, eye,
+    reference, 50114, null,
+    reference, 50114, null;
+
+structural : 50115, static,
+    reference, 50115, null,
+    reference, 50115, eye,
+    reference, 50115, null,
+    reference, 50115, null;
+
+structural : 50116, static,
+    reference, 50116, null,
+    reference, 50116, eye,
+    reference, 50116, null,
+    reference, 50116, null;
+
+structural : 50117, static,
+    reference, 50117, null,
+    reference, 50117, eye,
+    reference, 50117, null,
+    reference, 50117, null;
+
+structural : 50118, static,
+    reference, 50118, null,
+    reference, 50118, eye,
+    reference, 50118, null,
+    reference, 50118, null;
+
+structural : 50119, static,
+    reference, 50119, null,
+    reference, 50119, eye,
+    reference, 50119, null,
+    reference, 50119, null;
+
+
+
+structural : 50201, static,
+    reference, 50201, null,
+    reference, 50201, eye,
+    reference, 50201, null,
+    reference, 50201, null;
+
+structural : 50202, static,
+    reference, 50202, null,
+    reference, 50202, eye,
+    reference, 50202, null,
+    reference, 50202, null;
+
+structural : 50203, static,
+    reference, 50203, null,
+    reference, 50203, eye,
+    reference, 50203, null,
+    reference, 50203, null;
+
+structural : 50204, static,
+    reference, 50204, null,
+    reference, 50204, eye,
+    reference, 50204, null,
+    reference, 50204, null;
+
+structural : 50205, static,
+    reference, 50205, null,
+    reference, 50205, eye,
+    reference, 50205, null,
+    reference, 50205, null;
+
+structural : 50206, static,
+    reference, 50206, null,
+    reference, 50206, eye,
+    reference, 50206, null,
+    reference, 50206, null;
+
+structural : 50207, static,
+    reference, 50207, null,
+    reference, 50207, eye,
+    reference, 50207, null,
+    reference, 50207, null;
+
+structural : 50208, static,
+    reference, 50208, null,
+    reference, 50208, eye,
+    reference, 50208, null,
+    reference, 50208, null;
+
+structural : 50209, static,
+    reference, 50209, null,
+    reference, 50209, eye,
+    reference, 50209, null,
+    reference, 50209, null;
+
+structural : 50210, static,
+    reference, 50210, null,
+    reference, 50210, eye,
+    reference, 50210, null,
+    reference, 50210, null;
+
+structural : 50211, static,
+    reference, 50211, null,
+    reference, 50211, eye,
+    reference, 50211, null,
+    reference, 50211, null;
+
+structural : 50212, static,
+    reference, 50212, null,
+    reference, 50212, eye,
+    reference, 50212, null,
+    reference, 50212, null;
+
+structural : 50213, static,
+    reference, 50213, null,
+    reference, 50213, eye,
+    reference, 50213, null,
+    reference, 50213, null;
+
+structural : 50214, static,
+    reference, 50214, null,
+    reference, 50214, eye,
+    reference, 50214, null,
+    reference, 50214, null;
+
+structural : 50215, static,
+    reference, 50215, null,
+    reference, 50215, eye,
+    reference, 50215, null,
+    reference, 50215, null;
+
+structural : 50216, static,
+    reference, 50216, null,
+    reference, 50216, eye,
+    reference, 50216, null,
+    reference, 50216, null;
+
+structural : 50217, static,
+    reference, 50217, null,
+    reference, 50217, eye,
+    reference, 50217, null,
+    reference, 50217, null;
+
+structural : 50218, static,
+    reference, 50218, null,
+    reference, 50218, eye,
+    reference, 50218, null,
+    reference, 50218, null;
+
+structural : 50219, static,
+    reference, 50219, null,
+    reference, 50219, eye,
+    reference, 50219, null,
+    reference, 50219, null;
+
+
+structural : 50301, static,
+    reference, 50301, null,
+    reference, 50301, eye,
+    reference, 50301, null,
+    reference, 50301, null;
+
+structural : 50302, static,
+    reference, 50302, null,
+    reference, 50302, eye,
+    reference, 50302, null,
+    reference, 50302, null;
+
+structural : 50303, static,
+    reference, 50303, null,
+    reference, 50303, eye,
+    reference, 50303, null,
+    reference, 50303, null;
+
+structural : 50304, static,
+    reference, 50304, null,
+    reference, 50304, eye,
+    reference, 50304, null,
+    reference, 50304, null;
+
+structural : 50305, static,
+    reference, 50305, null,
+    reference, 50305, eye,
+    reference, 50305, null,
+    reference, 50305, null;
+
+structural : 50306, static,
+    reference, 50306, null,
+    reference, 50306, eye,
+    reference, 50306, null,
+    reference, 50306, null;
+
+structural : 50307, static,
+    reference, 50307, null,
+    reference, 50307, eye,
+    reference, 50307, null,
+    reference, 50307, null;
+
+structural : 50308, static,
+    reference, 50308, null,
+    reference, 50308, eye,
+    reference, 50308, null,
+    reference, 50308, null;
+
+structural : 50309, static,
+    reference, 50309, null,
+    reference, 50309, eye,
+    reference, 50309, null,
+    reference, 50309, null;
+
+structural : 50310, static,
+    reference, 50310, null,
+    reference, 50310, eye,
+    reference, 50310, null,
+    reference, 50310, null;
+
+structural : 50311, static,
+    reference, 50311, null,
+    reference, 50311, eye,
+    reference, 50311, null,
+    reference, 50311, null;
+
+structural : 50312, static,
+    reference, 50312, null,
+    reference, 50312, eye,
+    reference, 50312, null,
+    reference, 50312, null;
+
+structural : 50313, static,
+    reference, 50313, null,
+    reference, 50313, eye,
+    reference, 50313, null,
+    reference, 50313, null;
+
+structural : 50314, static,
+    reference, 50314, null,
+    reference, 50314, eye,
+    reference, 50314, null,
+    reference, 50314, null;
+
+structural : 50315, static,
+    reference, 50315, null,
+    reference, 50315, eye,
+    reference, 50315, null,
+    reference, 50315, null;
+
+structural : 50316, static,
+    reference, 50316, null,
+    reference, 50316, eye,
+    reference, 50316, null,
+    reference, 50316, null;
+
+structural : 50317, static,
+    reference, 50317, null,
+    reference, 50317, eye,
+    reference, 50317, null,
+    reference, 50317, null;
+
+structural : 50318, static,
+    reference, 50318, null,
+    reference, 50318, eye,
+    reference, 50318, null,
+    reference, 50318, null;
+
+structural : 50319, static,
+    reference, 50319, null,
+    reference, 50319, eye,
+    reference, 50319, null,
+    reference, 50319, null;
+
