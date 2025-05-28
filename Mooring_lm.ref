@@ -5,20 +5,6 @@ reference : 50001,
 	reference, global, null,
 	reference, global, null;
 
-reference : 50002,
-	reference, global,
-		 XFP2,  YFP2,  ZFP2,
-	reference, global, eye,
-	reference, global, null,
-	reference, global, null;
-
-reference : 50003,
-	reference, global,
-		 XFP3,  YFP3,  ZFP3,
-	reference, global, eye,
-	reference, global, null,
-	reference, global, null;
-
 reference : 50101,
 	reference, global,
 		42.406,  0.000,  -95.505,
@@ -151,6 +137,17 @@ reference : 50119,
 	reference, global, null,
 	reference, global, null;
 
+
+
+
+
+reference : 50002,
+	reference, global,
+		 XFP2,  YFP2,  ZFP2,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
 reference : 50201,
 	reference, global,
 		-21.203,  36.724,  -95.505,
@@ -279,6 +276,16 @@ reference : 50218,
 
 reference : 50219,
 		-403.6565,  699.153,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+
+
+
+reference : 50003,
+	reference, global,
+		 XFP3,  YFP3,  ZFP3,
 	reference, global, eye,
 	reference, global, null,
 	reference, global, null;
