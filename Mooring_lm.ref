@@ -1,0 +1,416 @@
+reference : 50001,
+	reference, global,
+		 XFP1,  YFP1,  ZFP1,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50002,
+	reference, global,
+		 XFP2,  YFP2,  ZFP2,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50003,
+	reference, global,
+		 XFP3,  YFP3,  ZFP3,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50101,
+	reference, global,
+		42.406,  0.000,  -95.505,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50102,
+	reference, global,
+		80.298,  0.000,  -119.978,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50103,
+	reference, global,
+		118.873,  0.000,  -143.362,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50104,
+	reference, global,
+		158.120,  0.000,  -165.597,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50105,
+	reference, global,
+		198.028,  0.000,  -186.624,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50106,
+	reference, global,
+		238.579,  0.000,  -206.381,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50107,
+	reference, global,
+		279.751,  0.000,  -224.808,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50108,
+	reference, global,
+		321.518,  0.000,  -241.846,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50109,
+	reference, global,
+		363.847,  0.000,  -257.433,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50110,
+	reference, global,
+		406.700,  0.000,  -271.515,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50111,
+	reference, global,
+		450.035,  0.000,  -284.036,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50112,
+	reference, global,
+		493.803,  0.000,  -294.947,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50113,
+	reference, global,
+		537.950,  0.000,  -304.201,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50114,
+	reference, global,
+		582.420,  0.000,  -311.760,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50115,
+	reference, global,
+		627.149,  0.000,  -317.589,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50116,
+	reference, global,
+		717.120,  0.000,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50117,
+	reference, global,
+		717.120,  0.000,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50118,
+	reference, global,
+		762.224,  0.000,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50119,
+		807.313,  0.000,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50201,
+	reference, global,
+		-21.203,  36.724,  -95.505,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50202,
+	reference, global,
+		-40.149,  69.540,  -119.978,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50203,
+	reference, global,
+		-59.4365,  102.947,  -143.362,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50204,
+	reference, global,
+		-79.06,  136.935,  -165.597,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50205,
+	reference, global,
+		-99.014,  171.497,  -186.624,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50206,
+	reference, global,
+		-119.2895,  206.615,  -206.381,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50207,
+	reference, global,
+		-139.8755,  242.271,  -224.808,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50208,
+	reference, global,
+		-160.759,  278.442,  -241.846,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50209,
+	reference, global,
+		-181.9235,  315.100,  -257.433,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50210,
+	reference, global,
+		-203.35,  352.212,  -271.515,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50211,
+	reference, global,
+		-225.0715,  389.741,  -284.036,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50212,
+	reference, global,
+		-246.9015,  427.645,  -294.947,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50213,
+	reference, global,
+		-268.975,  465.878,  -304.201,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50214,
+	reference, global,
+		-291.21,  504.390,  -311.760,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50215,
+	reference, global,
+		-313.5745,  543.126, -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50216,
+	reference, global,
+		-336.036,  582.031,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50217,
+	reference, global,
+		-358.56,  621.044,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50218,
+	reference, global,
+		-381.112,  660.105,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50219,
+		-403.6565,  699.153,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50301,
+	reference, global,
+		-21.203,  -36.724,  -95.505,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50302,
+	reference, global,
+		-40.149,  -69.540,  -119.978,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50303,
+	reference, global,
+		-59.4365,  -102.947,  -143.362,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50304,
+	reference, global,
+		-79.06,  -136.935,  -165.597,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50305,
+	reference, global,
+		-99.014,  -171.497,  -186.624,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50306,
+	reference, global,
+		-119.2895,  -206.615,  -206.381,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50307,
+	reference, global,
+		-139.8755,  -242.271,  -224.808,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50308,
+	reference, global,
+		-160.759,  -278.442,  -241.846,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50309,
+	reference, global,
+		-181.9235,  -315.100,  -257.433,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50310,
+	reference, global,
+		-203.35,  -352.212,  -271.515,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50311,
+	reference, global,
+		-225.0715,  -389.741,  -284.036,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50312,
+	reference, global,
+		-246.9015,  -427.645,  -294.947,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50313,
+	reference, global,
+		-268.975,  -465.878,  -304.201,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50314,
+	reference, global,
+		-291.21,  -504.390,  -311.760,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50315,
+	reference, global,
+		-313.5745,  -543.126, -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50316,
+	reference, global,
+		-336.036,  -582.031,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50317,
+	reference, global,
+		-358.56,  -621.044,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50318,
+	reference, global,
+		-381.112,  -660.105,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
+
+reference : 50319,
+		-403.6565,  -699.153,  -320.000,
+	reference, global, eye,
+	reference, global, null,
+	reference, global, null;
