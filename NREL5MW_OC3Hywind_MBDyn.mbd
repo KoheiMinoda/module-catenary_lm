@@ -4,6 +4,7 @@
 #----------------------- modules --------------------------------------
 
 module load: "/usr/local/mbdyn/libexec/libmodule-spardyn_b1.11.la";
+# module load: "/usr/local/mbdyn/libexec/libmodule-catenary";
 module load: "/usr/local/mbdyn/libexec/libmodule-catenary_lm";
 module load: "/usr/local/mbdyn/libexec/libmodule-aerodyn13_b1.09.la";
 
@@ -285,6 +286,7 @@ end: control data;
 #-------------------- Reference ------------------------------------------
 
     include: "./01_Platform3/Platform.ref";
+    # include: "./02_Mooring/Mooring.ref";
     include: "./02_Mooring/Mooring_lm.ref";
     include: "./04_RNA/Nacelle.ref";
     include: "./04_RNA/Blade.ref";
@@ -295,6 +297,7 @@ end: control data;
 begin: nodes;
 
     include: "./01_Platform3/Platform.nod";
+    # include: "./02_Mooring/Mooring.nod";
     include: "./02_Mooring/Mooring_lm.nod";
     include: "./03_Tower/Tower.nod";
     include: "./04_RNA/Nacelle.nod";
@@ -341,6 +344,7 @@ begin: elements;
     #--------------user elements----------------------------------- 
 
     include: "./01_Platform3/Platform_spardyn.usr";
+    # include: "./02_Mooring/Mooring_catenary.usr";
     include: "./02_Mooring/Mooring_catenary_lm.usr";
     include: "./NREL5MW_OC3Hywind_MBDyn_aerodyn13.usr";
     include: "./NREL5MW_OC3Hywind_MBDyn_discon.usr"; 
