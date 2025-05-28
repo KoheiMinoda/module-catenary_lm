@@ -4,18 +4,6 @@ structural : 50001, static,
     reference, 50001, null,
     reference, 50001, null;
 
-structural : 50002, static,
-    reference, 50002, null,
-    reference, 50002, eye,
-    reference, 50002, null,
-    reference, 50002, null;
-
-structural : 50003, static,
-    reference, 50003, null,
-    reference, 50003, eye,
-    reference, 50003, null,
-    reference, 50003, null;
-
 structural : 50101, static,
     reference, 50101, null,
     reference, 50101, eye,
@@ -132,6 +120,12 @@ structural : 50119, static,
 
 
 
+structural : 50002, static,
+    reference, 50002, null,
+    reference, 50002, eye,
+    reference, 50002, null,
+    reference, 50002, null;
+
 structural : 50201, static,
     reference, 50201, null,
     reference, 50201, eye,
@@ -246,6 +240,13 @@ structural : 50219, static,
     reference, 50219, null,
     reference, 50219, null;
 
+
+
+structural : 50003, static,
+    reference, 50003, null,
+    reference, 50003, eye,
+    reference, 50003, null,
+    reference, 50003, null;
 
 structural : 50301, static,
     reference, 50301, null,
