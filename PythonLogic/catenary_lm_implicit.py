@@ -35,6 +35,18 @@ l_param = L_TOTAL / h_span
 
 _current_p0_for_funcd = 0.0
 
+# ----- ランプ関数 -----
+
+RAMP_T = 10.0
+def grav_scale(time):
+    if time <= 0.0:
+        return 0.0
+    if time >= RAMP_T:
+        return 1.0
+    fsf = time / RAMP_T
+    return 3.0*fsf*fsf - 2.0*fsf*fsf*fsf
+# -----------------------
+
 def _solve_for_p0_in_funcd(x_candidate, l_val, xacc_p0):
     p0 = 0.0
 
@@ -443,6 +455,50 @@ def seabed_contact_forces(nodes):
     
     return f_node
 
+# ---- 残差 AssRes ----------
+
+# ----  残差・ヤコビアン --------------------------------------------------
+def assemble_residual(q_next, q_prev, v_prev, masses, segments, time_curr):
+
+    N = len(masses)
+    # ベクトルを 3成分ずつ並べ替えて nodes_like 構造へ
+    q_mat = q_next.reshape((N,3))
+    nodes_tmp = [{"pos":q_mat[i], "vel":None, "mass":masses[i]} for i in range(N)]
+    # 速度は後退オイラー： v_{n+1} = (q_{n+1}-q_n)/dt
+    v_next_mat = (q_next - q_prev)/DT
+    for i in range(N):
+        nodes_tmp[i]["vel"] = v_next_mat[i*3:(i+1)*3]
+
+    f_int = axial_forces(nodes_tmp, segments)          # 3要素リスト×N
+    f_int_flat = np.array(f_int).reshape(-1)           # (3N)
+
+    # 外力（重力）も (3N)
+    f_ext = np.zeros_like(f_int_flat)
+    scale = grav_scale(time_curr)
+    gvec = np.array([0.0,0.0,-g*scale])
+    for i,m in enumerate(masses):
+        f_ext[3*i:3*i+3] = m * gvec
+
+    # 慣性項 M a
+    a_flat = (v_next_mat.reshape(-1) - v_prev)/DT      # (3N)
+    M_flat = np.repeat(masses, 3)                      # (3N)
+    inert = M_flat * a_flat
+
+    return inert - f_int_flat - f_ext                  # (3N)
+
+# ---- 全体ヤコビアン AssJac ------
+
+def assemble_jacobian(q_next, q_prev, v_prev, masses, segments, time_curr, eps=1e-6):
+
+    R0 = assemble_residual(q_next, q_prev, v_prev, masses, segments, time_curr)
+    size = R0.size
+    J = np.zeros((size, size)) # 180 x 180
+    for k in range(size):
+        dq = np.zeros(size); dq[k] = eps
+        Rk = assemble_residual(q_next+dq, q_prev, v_prev, masses, segments)
+        J[:,k] = (Rk - R0)/eps
+    return J
+
 
 # ---- 加速度計算 --------------------------------------------------------
 def compute_acc(nodes, segments):
@@ -466,33 +522,68 @@ OUTPUT_NODES = list(range(num_nodes)) # 0(FP) ~ 20(AP)
 node_traj = {idx: [] for idx in OUTPUT_NODES} 
 
 # ---- 時間積分ループ -----------------------------------------------------
-print("\n--- Lumped-mass explicit simulation start ({} s, dt={} s) ---"
-      .format(T_END, DT))
-t = 0.0
-traj_out = []
 
-nodes[0]["mass"] = 0.0
+print("\n--- Lumped-mass implicit simulation start ({} s, dt={} s) ---"
+    .format(T_END, DT))
+
+t = 0.0
+q_prev_full  = np.concatenate([n["pos"] for n in nodes])
+v_prev_full  = np.concatenate([n["vel"] for n in nodes])
+masses_full  = np.array([n["mass"] for n in nodes])
+
+# prescribe lists --------------------------------------
+fixed_idx = [0, num_nodes-1]          # FL と AP
+free_idx = [i for i in range(num_nodes) if i not in fixed_idx]
+free_dof = np.array([[3*i,3*i+1,3*i+2] for i in free_idx]).flatten()
+
+# 出力用
+node_traj = {idx: [] for idx in OUTPUT_NODES}
 
 while t <= T_END:
-    
-    x_fl  = FP_COORDS['x'] + AMP_FL * math.sin(OMEGA_FL * t)
-    vx_fl = AMP_FL * OMEGA_FL * math.cos(OMEGA_FL * t)
+    t_n = t
+    t_np1 = t + DT
+
+    # --- フェアリーダーポイントを設定-------------------------
+    x_fl = FP_COORDS['x'] + AMP_FL*np.sin(OMEGA_FL*t)
+    vx_fl= AMP_FL*OMEGA_FL*np.cos(OMEGA_FL*t)
     nodes[0]["pos"][:] = [x_fl, FP_COORDS['y'], FP_COORDS['z']]
     nodes[0]["vel"][:] = [vx_fl, 0.0, 0.0]
 
-    a_list = compute_acc(nodes, segments)
+    # 全自由度ベクトルを前回値で初期化
+    q_init = np.concatenate([n["pos"] for n in nodes])
+    v_prev = np.concatenate([n["vel"] for n in nodes])
 
-    for k in range(1, num_nodes - 1):
-        nodes[k]["vel"] += a_list[k]*DT
-        nodes[k]["pos"] += nodes[k]["vel"]*DT
+    # --- unknown = free DOF のみ -------------------------------
+    qk = q_init[free_dof].copy()
 
+    # Newton 反復 ------------------------------------------
+    for it in range(20):
+        q_full          = q_init.copy()
+        q_full[free_dof]= qk
+        R = assemble_residual(q_full, q_prev_full, v_prev_full, masses_full, segments, time_curr=t_np1)[free_dof]
+        if np.linalg.norm(R) < 1e-8:
+            break
+        J_full = assemble_jacobian(q_full, q_prev_full, v_prev_full, masses_full, segments, time_curr=t_np1)
+        J = J_full[np.ix_(free_dof, free_dof)]
+        dq = np.linalg.solve(J, -R)
+        qk += dq
+
+    # --- 収束後の状態を nodes に書き戻し -------------------------
+    q_prev_full[free_dof] = qk
+    v_new_full = (q_prev_full - v_prev_full*DT - q_prev_full)/(-DT)  # v_{n+1}
+    for i,n in enumerate(nodes):
+        n["pos"][:] = q_prev_full[3*i:3*i+3]
+        n["vel"][:] = v_new_full[3*i:3*i+3]
+
+    # ---- 記録
     for idx in OUTPUT_NODES:
         p = nodes[idx]["pos"]
         node_traj[idx].append([t, p[0], p[1], p[2]])
-    
+
     t += DT
 
-print("--- simulation finished ---")
+print("--- implicit simulation finished ---")
+
 
 # ---- CSV ファイル書き出し ------------------------------------------------
 
