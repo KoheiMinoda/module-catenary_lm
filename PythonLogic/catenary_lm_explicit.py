@@ -466,7 +466,7 @@ OUTPUT_NODES = list(range(num_nodes)) # 0(FP) ~ 20(AP)
 node_traj = {idx: [] for idx in OUTPUT_NODES} 
 
 # ---- 時間積分ループ -----------------------------------------------------
-print("\n--- Lumped-mass dynamic simulation start ({} s, dt={} s) ---"
+print("\n--- Lumped-mass explicit simulation start ({} s, dt={} s) ---"
       .format(T_END, DT))
 t = 0.0
 traj_out = []
