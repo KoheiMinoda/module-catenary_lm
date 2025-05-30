@@ -35,6 +35,20 @@ l_param = L_TOTAL / h_span
 
 _current_p0_for_funcd = 0.0
 
+# ----- ランプ関数 -----
+
+RAMP_T = 10.0
+def grav_scale(time):
+    if time <= 0.0:
+        return 0.0
+    if time >= RAMP_T:
+        return 1.0
+    fsf = time / RAMP_T
+    return 3.0*fsf*fsf - 2.0*fsf*fsf*fsf
+# -----------------------
+
+
+
 def _solve_for_p0_in_funcd(x_candidate, l_val, xacc_p0):
     p0 = 0.0
 
@@ -445,9 +459,10 @@ def seabed_contact_forces(nodes):
 
 
 # ---- 加速度計算 --------------------------------------------------------
-def compute_acc(nodes, segments):
+def compute_acc(nodes, segments, time):
     f_axial = axial_forces(nodes, segments)
     f_seabed = seabed_contact_forces(nodes)
+    scale = grav_scale(time)
 
     acc = []
     for k, node in enumerate(nodes):
@@ -456,7 +471,7 @@ def compute_acc(nodes, segments):
             acc.append(np.zeros(3))
             continue
 
-        Fg = np.array([0.0, 0.0, -node["mass"]*g])
+        Fg = np.array([0.0, 0.0, -node["mass"]*g*scale])
         F_tot = f_axial[k] + f_seabed[k] + Fg # 合力
 
         acc.append(F_tot / node["mass"])
@@ -480,7 +495,7 @@ while t <= T_END:
     nodes[0]["pos"][:] = [x_fl, FP_COORDS['y'], FP_COORDS['z']]
     nodes[0]["vel"][:] = [vx_fl, 0.0, 0.0]
 
-    a_list = compute_acc(nodes, segments)
+    a_list = compute_acc(nodes, segments, t)
 
     for k in range(1, num_nodes - 1):
         nodes[k]["vel"] += a_list[k]*DT
