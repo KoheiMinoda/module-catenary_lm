@@ -330,10 +330,6 @@ ModuleCatenaryLM::ModuleCatenaryLM(
             }
         }
 
-        // 各ノードに対応する慣性の情報をもたせる？
-        // 具体的に慣性を足すのは AssRes 内部
-
-        Krot_lock_param = 1.e12;
         segSlack_prev.assign(Seg_param - 1, false);
 
         // ログ出力：
@@ -707,7 +703,7 @@ void ModuleCatenaryLM::Output(OutputHandler& OH) const {
 // origin ではフェアリーダーポイントのみで 6 自由度で扱っていたが，ランプドマス法で内部ノードも全て管理する場合は大きく変わる
 void ModuleCatenaryLM::WorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
     unsigned int num_nodes = Seg_param;
-    unsigned int dof_per_node = 6;
+    unsigned int dof_per_node = 3;
 
     *piNumRows = num_nodes * dof_per_node;
     *piNumCols = num_nodes * dof_per_node;
@@ -715,7 +711,7 @@ void ModuleCatenaryLM::WorkSpaceDim(integer* piNumRows, integer* piNumCols) cons
 
 void ModuleCatenaryLM::InitialWorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
     unsigned int num_nodes = Seg_param;
-    unsigned int dof_per_node = 6;
+    unsigned int dof_per_node = 3;
 
     *piNumRows = num_nodes * dof_per_node;
     *piNumCols = num_nodes * dof_per_node;
@@ -731,12 +727,12 @@ SubVectorHandler& ModuleCatenaryLM::AssRes(
 
     const doublereal fsf = FSF_orig.dGet();
 
-    const unsigned int ndof_tot = Seg_param * 6;
+    const unsigned int ndof_tot = Seg_param * 3;
     R.ResizeReset(ndof_tot);
 
     for (unsigned int i = 0; i < Seg_param; ++i) {
         
-        const unsigned int idx = i*6;
+        const unsigned int idx = i*3;
 
         // ====== 重力 + 慣性：ノード単位 ======
         const Vec3 Fg(0.0, 0.0, -node_mass_param[i]*g_gravity_param);
@@ -758,8 +754,6 @@ SubVectorHandler& ModuleCatenaryLM::AssRes(
             Vec3 Fseabed(0.0, 0.0, Fz*fsf);
             R.Add(idx+1, Fseabed); // +Z 方向の反力
         }
-
-        // 回転 DOF (4 ,5, 6) はここでは 0 : ノード単位の計算の時は考慮しない
     }
     
     // ====== 軸方向の EA + CA：セグメント単位 ======
@@ -805,8 +799,8 @@ SubVectorHandler& ModuleCatenaryLM::AssRes(
         const Vec3 F = t * (Faxial * fsf); // 軸力ベクトル
 
         if (Faxial > 0.0) { // Faxial == 0 のときは何もしない
-            const unsigned int idx_i = i*6;
-            const unsigned int idx_j = j*6;
+            const unsigned int idx_i = i*3;
+            const unsigned int idx_j = j*3;
 
             R.Add(idx_i+1, -F); // 左ノード
             R.Add(idx_j+1, F); // 右ノード
@@ -830,7 +824,7 @@ VariableSubMatrixHandler& ModuleCatenaryLM::AssJac(
     const VectorHandler& XCurr, 
     const VectorHandler& XPrimeCurr
 ) {
-    const integer ndof_tot = Seg_param * 6; // ベクトルの大きさを決める int 変数を宣言して初期化
+    const integer ndof_tot = Seg_param * 3; // ベクトルの大きさを決める int 変数を宣言して初期化
     FullSubMatrixHandler& K = WH.SetFull();
     K.ResizeReset(ndof_tot, ndof_tot); // 初期化（0 が入っている）
 
@@ -839,7 +833,7 @@ VariableSubMatrixHandler& ModuleCatenaryLM::AssJac(
     // ============================
 
     for (unsigned int i = 0; i < Seg_param; ++i) {
-        const unsigned int idx = i*6;
+        const unsigned int idx = i*3;
         const doublereal z_i = N_nodes_param[i] -> GetXCurr().dGet(3);
 
         if (z_i < seabed_z_param) { // z 座標によって付加
@@ -847,14 +841,6 @@ VariableSubMatrixHandler& ModuleCatenaryLM::AssJac(
             const doublereal c_sea = - Cseabed_param * dCoef;
 
             K.PutCoef(idx+3, idx+3, k_sea + c_sea);
-        }
-    }
-
-    // 回転 DOF を数値的に固定：大きな対角剛性をもたせる
-    for (unsigned int i = 0; i < Seg_param; ++i) {
-        const unsigned int idx = i * 6;
-        for (int r = 4; r <= 6; ++r) { 
-            K.PutCoef(idx + r, idx + r, Krot_lock_param);
         }
     }
 
@@ -866,8 +852,8 @@ VariableSubMatrixHandler& ModuleCatenaryLM::AssJac(
         // 隣接ノード index
         const unsigned int i = s;
         const unsigned int j = s + 1;
-        const unsigned int row_i = i*6;
-        const unsigned int row_j = j*6;
+        const unsigned int row_i = i*3;
+        const unsigned int row_j = j*3;
 
         // ======= 位置・速度・方向 ========
         Vec3 xi = N_nodes_param[i] -> GetXCurr();
@@ -950,7 +936,7 @@ std::ostream& ModuleCatenaryLM::Restart(std::ostream& out) const {
 
 // 初期化フェーズで特別な解析をするなら，初期のみ自由度を付与する
 unsigned int ModuleCatenaryLM::iGetInitialNumDof(void) const {
-    return Seg_param * 6;
+    return Seg_param * 3;
 }
 
 
