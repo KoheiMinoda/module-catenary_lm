@@ -489,13 +489,12 @@ def assemble_residual(q_next, q_prev, v_prev, masses, segments, time_curr):
 # ---- 全体ヤコビアン AssJac ------
 
 def assemble_jacobian(q_next, q_prev, v_prev, masses, segments, time_curr, eps=1e-6):
-
     R0 = assemble_residual(q_next, q_prev, v_prev, masses, segments, time_curr)
     size = R0.size
     J = np.zeros((size, size)) # 180 x 180
     for k in range(size):
         dq = np.zeros(size); dq[k] = eps
-        Rk = assemble_residual(q_next+dq, q_prev, v_prev, masses, segments)
+        Rk = assemble_residual(q_next+dq, q_prev, v_prev, masses, segments, time_curr)  # time_currを追加
         J[:,k] = (Rk - R0)/eps
     return J
 
