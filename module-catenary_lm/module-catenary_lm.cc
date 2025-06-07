@@ -21,26 +21,41 @@
 
 #include <vector>       // std::vector (ノードやセグメントのリスト管理用)
 
+// ========= virtual node =========
+struct VirtualNode {
+    Vec3 position;
+    Vec3 velocity;
+    Vec3 acceleration;
+    doublereal mass;
+    bool active;
+
+    VirtualNode() :
+        position(0.0, 0.0, 0.0),
+        velocity(0.0, 0.0, 0.0),
+        acceleration(0.0, 0.0, 0.0),
+        mass(0.0),
+        active(true)
+    {}
+
+    VirtualNode(const Vec3& pos, doublereal m) :
+        position(pos),
+        velocity(0.0, 0.0, 0.0),
+        acceleration(0.0, 0.0, 0.0),
+        mass(m),
+        active(true)
+    {}
+};
+
 // クラス宣言
 class ModuleCatenaryLM : virtual public Elem, public UserDefinedElem
 {
-public:
-    // コンストラクタ [uLabel : 要素のラベル, *pD0 : DOF(Degree of Freedom) 所有者へのポインタ, *pDM : データマネージャーへのポインタ, HP : MBDyn パーサへの"参照"] 
+public: 
     ModuleCatenaryLM(unsigned uLabel, const DofOwner *pD0, DataManager* pDM, MBDynParser& HP);
-    // デストラクタ [オブジェクトが破棄されるたび呼びだされる] // メモリリークを防ぐために重要
     virtual ~ModuleCatenaryLM(void);
 
-    // ========= 仮想関数群 ここから ==============
-    // クラス宣言の際に Elem と UserDefinedElem を継承している
-    // 以下の "virtual" 宣言は (Elem と UserDefinedElem) で宣言されている仮想関数を再定義することを意味する
-    // "const" のキーワードがついているメンバ関数は，その関数内でオブジェクトのメンバ変数を変更しないという宣言
-
-    // シミュレーション中に特定の要素の状態（FP 点の位置や張力など）を指定された形式で出力ファイルに書き出すために MBDyn から呼び出される
     virtual void Output(OutputHandler& OH) const;
-    // ヤコビアン行列，残差行列のサイズを決める：ランプドマスモデルでは，関連するノードの自由度に依存
     virtual void WorkSpaceDim(integer* piNumRows, integer* piNumCols) const;
 
-    // 要素の運動方程式を現在の状態変数とその時間微分で偏微分下ヤコビアン行列の"成分"を計算し，MBDyn の全体ヤコビアン行列の対応する部分に格納する
     VariableSubMatrixHandler&
     AssJac(VariableSubMatrixHandler& WorkMat, 
         doublereal dCoef, 
@@ -48,7 +63,6 @@ public:
         const VectorHandler& XPrimeCurr
     );
 
-    // 要素の運動方程式の外力を計算する
     SubVectorHandler&
     AssRes(SubVectorHandler& WorkVec, 
         doublereal dCoef, 
@@ -61,13 +75,10 @@ public:
         VectorHandler& X,
         VectorHandler& XP,
         SimulationEntity::Hints* pHints
-    ) override; // override は C++11 以降で基底クラスに仮想関数がなければコンパイルエラーを発生させるという機能：無くても良い
+    ) override;
 
-    // この要素が直接族または管理しているノードの数を返す
     virtual unsigned int iGetNumConnectedNodes(void) const;
-    // シミュレーション開始時に要素の初期状態や初期ノードの初期値を設定する
     virtual void SetInitialValue(VectorHandler& X, VectorHandler& XP);
-    // 中断した後に再開する場合に内部情報を保存する
     virtual std::ostream& Restart(std::ostream& out) const;
 
     virtual unsigned int iGetInitialNumDof(void) const;
@@ -79,7 +90,6 @@ public:
 
     virtual const Node* pGetNode(unsigned int i) const;
     virtual Node* pGetNode(unsigned int i);
-    // ========= 仮想関数群 ここまで ==============
 
 private:
     double APx_orig; // アンカー点の x 座標
@@ -91,6 +101,24 @@ private:
 
     DriveOwner FSF_orig; // 元の Force Scale Factor：ランプアップに使う
 
+    unsigned int Seg_param;
+    doublereal g_gravity_param;
+    // 海底反力の考慮
+    doublereal seabed_z_param; // 海底面 Z 座標（上向きが正）
+    doublereal Kseabed_param; // 海底ばね [N/m]
+    doublereal Cseabed_param; // 海底ダンパ [N s / m]
+
+    StructDispNode* fairlead_node;
+    std::vector<VirtualNode> virtual_nodes;
+
+    struct SegmentProperty {
+        doublereal L0_seg, M_seg, EA_seg, CA_seg;
+        SegmentProperty() : L0_seg(0.0), M_seg(0.0), EA_seg(0.0), CA_seg(0.0) {}
+    };
+    std::vector<SegmentProperty> P_param;
+    std::vector<bool> segSlack_prev;
+
+
     // ===== 静的メンバ関数 =====
     // "static" 特定のオブジェクトインスタンスに属さず，クラス自体に関連付けられる
     static double myasinh_local(double val);
@@ -100,40 +128,11 @@ private:
     static double rtsafe_catenary_local(double x1_bounds, double x2_bounds, double xacc_tol, double d_geom, double l_geom, double &p0_angle_out);
     // ========================
 
-    unsigned int Seg_param;
-
-    // ノード配列 (StructNode* の動的配列)
-    // N_nodes_param[0] はフェアリーダーノード
-    // N_nodes_param[1] ... N_nodes_param[Seg_param-1] は内部質量点ノード
-    // アンカーは固定座標(APx_orig, APy_orig, APz_orig)として別途扱う
-    // このベクトルサイズは Seg_param になる（0 ~ Seg_param - 1）
-    std::vector<StructDispNode*> N_nodes_param;
-
-    std::vector<doublereal> node_mass_param; // 各ランプドマス点の質量 [kg]
-
-    // 各セグメントの特性
-    struct SegmentProperty {
-        doublereal L0_seg;  // 「セグメント」の初期自然長
-        doublereal M_seg;   // 「セグメント」の質量
-        doublereal EA_seg;  // 「セグメント」の軸剛性 (EA)
-        doublereal CA_seg;  // 「セグメント」の軸方向減衰係数 (オプション)
-
-        SegmentProperty() : L0_seg(0.0), M_seg(0.0), EA_seg(0.0), CA_seg(0.0) {}
-    };
-    std::vector<SegmentProperty> P_param; // サイズは Seg_param (セグメント数)
-
-    doublereal g_gravity_param;
-
-    // 海底反力の考慮
-    doublereal seabed_z_param; // 海底面 Z 座標（上向きが正）
-    doublereal Kseabed_param; // 海底ばね [N/m]
-    doublereal Cseabed_param; // 海底ダンパ [N s / m]
-
-    std::vector<bool> segSlack_prev; // 前回計算時のスラック状態
-    doublereal Krot_lock_param; // 回転 DOF を縛るペナルティ剛性
+    void UpdateVirtualNodes(doublereal dCoef, const VectorHandler& XCurr, const VectorHandler& XPrimeCurr);
+    void InitializeVirtualNodes();
 };
 
-// コンストラクタ：パラメータの読み込みと初期設定
+// ============== コンストラクタ：パラメータの読み込みと初期設定 ==========
 ModuleCatenaryLM::ModuleCatenaryLM(
     unsigned uLabel,
     const DofOwner *pD0,
@@ -146,18 +145,19 @@ ModuleCatenaryLM::ModuleCatenaryLM(
         APx_orig(0.0), APy_orig(0.0), APz_orig(0.0),
         L_orig(0.0), w_orig(0.0), xacc_orig(1e-6),
         Seg_param(20),
-        g_gravity_param(9.80665)
+        g_gravity_param(9.80665),
+        fairlead_node(nullptr)
     {
         // 入力ファイルの現在位置が "help" なら使用方法のメッセージを表示
         if (HP.IsKeyWord("help")) {
             silent_cout(
                 "\n"
-                "Module:     ModuleCatenaryLM (Lumped Mass Catenary Mooring Line - Segments Fixed to 20)\n"
+                "Module:     ModuleCatenaryLM (Lumped Mass Catenary Mooring Line)\n"
                 "Usage:      catenary_lm, \n"
                 "                fairlead_node_label,\n"
                 "                total_length, unit_weight, rtsafe_accuracy,\n"
                 "                APx, APy, APz, (Anchor fixed coordinates)\n"
-                "                EA (axial_stiffness),\n"
+                "              [ EA (axial_stiffness), ]\n"
                 "              [ CA (axial_damping), ]\n"
                 "              [ gravity, g, ]\n"
                 "              [ force scale factor, (DriveCaller), ]\n"
@@ -172,6 +172,9 @@ ModuleCatenaryLM::ModuleCatenaryLM(
 
         // ===== パラメータ読み込み開始 =====
         // ここでの読み込みは .mbd ファイルの elements block を上から読み込む（.usr ファイルに外だししているかも）
+
+        // フェアリーダーノード
+        unsigned int fairlead_node_label = HP.GetInt();
 
         // 全長 L_orig
         L_orig = HP.GetReal();
@@ -198,11 +201,9 @@ ModuleCatenaryLM::ModuleCatenaryLM(
 
         // ====== EA, CA, g : 既存の .usr ファイルに加える項目？==========
         // 軸剛性 EA (ランプドマス法用)
-        doublereal EA_val;
-        if (HP.IsKeyWord("EA")) { // キーワードがある方がより頑健
+        doublereal EA_val = 7.536e9; // デフォルト
+        if (HP.IsKeyWord("EA")) {
             EA_val = HP.GetReal();
-        } else {
-            EA_val = HP.GetReal(); // キーワードなしで順番に読む場合
         }
         if (EA_val <= 0.0) {
             throw ErrGeneric(MBDYN_EXCEPT_ARGS);
@@ -220,7 +221,8 @@ ModuleCatenaryLM::ModuleCatenaryLM(
         // 重力加速度 g (オプション)
         if (HP.IsKeyWord("gravity")) {
             g_gravity_param = HP.GetReal();
-            if (g_gravity_param < 0.0) { // 正の値
+            if (g_gravity_param < 0.0) {
+                throw ErrGeneric(MBDYN_EXCEPT_ARGS);
             }
         }
 
@@ -244,69 +246,21 @@ ModuleCatenaryLM::ModuleCatenaryLM(
         // 出力フラグの設定（元のコードを維持）
         SetOutputFlag(pDM->fReadOutput(HP, Elem::LOADABLE));
 
-        // ノードの確保と初期化
-        // N_nodes_param にはフェアリーダーと Seg_param-1 個の内部ノードを格納
-        // 合計 Seg_param 個の StructNode* を持つ
-        N_nodes_param.clear();
-        N_nodes_param.resize(Seg_param);
-
-        // ====== ここも既存の .usr ファイルに書き足す ======
-        unsigned int fairlead_node_label = HP.GetInt();
-
         // 各ノードのラベルの受け取り
-        // フェアリーダーノードの処理
+        // フェアリーダーノードの処理（実ノード）
         {
             Node* rawNode = pDM->pFindNode(Node::STRUCTURAL, fairlead_node_label);
             if (rawNode == nullptr) {
                 throw ErrGeneric(MBDYN_EXCEPT_ARGS);
             }
-            StructDispNode* dispNode = dynamic_cast<StructDispNode*>(rawNode);
-            if (dispNode == nullptr) {
+            fairlead_node = dynamic_cast<StructDispNode*>(rawNode);
+            if (fairlead_node == nullptr) {
                 throw ErrGeneric(MBDYN_EXCEPT_ARGS);
             }
-            N_nodes_param[0] = dispNode;
         }
 
-        /*
-        // .ref で定義せずに，各内部ノードのデータは追わない場合
-        const integer BASE_LBL = 90000;
-        for (unsigned int i = 1; i < Seg_param; ++i) {
-
-            integer lbl = BASE_LBL + i;
-
-            StructDispNode* pNew = new StructDispNode(
-                nextLbl + 1,
-                *pD0,
-                Vec3(0., 0., 0.),
-                Mat3x3DEye,
-                Vec3(0., 0., 0.),
-                Vec3(0., 0., 0.)
-            );
-
-            pDM -> AddNode(pNew);
-            N_nodes_param[i] = pNew;
-        }
-        */
-
-        // ====== 各ノードの時系列データを追うならこれで良いはず？ ============
-        // 一旦は FP だけにして後回し
-        // 内部質量点ノードの処理（1 … Seg_param-1）もすべて入力ファイルでラベルを受け取り
-        for (unsigned int i = 1; i < Seg_param; ++i) {
-            unsigned int node_label = HP.GetInt();
-
-            Node* rawNode = pDM->pFindNode(Node::STRUCTURAL, node_label);
-            if (rawNode == nullptr) {
-                throw ErrGeneric(MBDYN_EXCEPT_ARGS);
-            }
-            StructDispNode* dispNode = dynamic_cast<StructDispNode*>(rawNode);
-            if (dispNode == nullptr) {
-                throw ErrGeneric(MBDYN_EXCEPT_ARGS);
-            }
-            N_nodes_param[i] = dispNode;
-        }
-
-        Vec3 zeroPos(0.0, 0.0, 0.0);
-        Vec3 zeroVel(0.0, 0.0, 0.0);
+        // 仮想内部ノードの初期化
+        virtual_nodes.resize(Seg_param - 1);
 
         P_param.resize(Seg_param); // Seg_param 個のセグメント
         doublereal L0_s = L_orig / static_cast<doublereal>(Seg_param); // 各セグメントの自然長：単純に全長をセグメント数で割っている
@@ -320,17 +274,30 @@ ModuleCatenaryLM::ModuleCatenaryLM(
             P_param[i].CA_seg = CA_val;
         }
 
-        // 各ノードに対応する質量
-        node_mass_param.assign(Seg_param, 0.0);
-        for (unsigned int s = 0; s < Seg_param; ++s) {
-            const doublereal m_half = P_param[s].M_seg*0.5;
-            node_mass_param[s] += m_half; // 右端側
-            if (s+1 < Seg_param) {
-                node_mass_param[s+1] += m_half; // 左隣側
+        // 各仮想ノードに対応する質量
+        for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+            doublereal node_mass = 0.0;
+
+            if (i < P_param.size()) {
+                node_mass += P_param[i].M_seg * 0.5;
             }
+            if (i + 1 < P_param.size()) {
+                node_mass += P_param[i + 1].M_seg * 0.5;
+            }
+            virtual_nodes[i].mass = node_mass;
         }
 
         segSlack_prev.assign(Seg_param - 1, false);
+
+        InitializeVirtualNodes();
+
+        // デバッグ出力
+        for (unsigned int i = 0; i < virtual_nodes.size() && i < 3; ++i) {
+            pDM->GetLogFile() << "  Virtual Node " << i << ": " 
+                              << virtual_nodes[i].position.dGet(1) << ", "
+                              << virtual_nodes[i].position.dGet(2) << ", "
+                              << virtual_nodes[i].position.dGet(3) << std::endl;
+        }
 
         // ログ出力：
         pDM->GetLogFile() << "ModuleCatenaryLM (" << GetLabel() << ") initialized:" << std::endl;
@@ -347,6 +314,290 @@ ModuleCatenaryLM::~ModuleCatenaryLM(void){}
 double ModuleCatenaryLM::myasinh_local(double val) { return std::log(val + std::sqrt(val * val + 1.)); }
 double ModuleCatenaryLM::myacosh_local(double val) { return std::log(val + std::sqrt(val + 1.) * std::sqrt(val - 1.));}
 double ModuleCatenaryLM::myatanh_local(double val) { return 0.5 * std::log((1. + val) / (1. - val)); }
+
+// ======= 仮想ノードの初期化 =========
+
+void ModuleCatenaryLM::InitializeVirtualNodes() {
+    
+    if (fairlead_node == nullptr) return;
+
+    const Vec3& fairlead_pos = fairlead_node->GetXCurr();
+    Vec3 anchor_pos(APx_orig, APy_orig, APz_orig);
+
+    Vec3 FP_AP = fairlead_pos - anchor_pos;
+    doublereal h = std::fabs(FP_AP.dGet(3));
+    doublereal L_APFP = std::sqrt(std::pow(FP_AP.dGet(1), 2.0) + std::pow(FP_AP.dGet(2), 2.0));
+
+    Vec3 horizontal_dir(0.0, 0.0, 0.0);
+    if (L_APFP > 1e-12) {
+        horizontal_dir = Vec3(FP_AP.dGet(1) / L_APFP, FP_AP.dGet(2) / L_APFP, 0.0);
+    }
+
+    // 簡単な線形配置から開始（カテナリー計算でエラーが発生する場合のフォールバック）
+    bool use_simple_initialization = true;
+
+    try {
+        // カテナリー理論による初期位置計算
+        doublereal L0_APFP = L_orig - h;
+        doublereal delta = L_APFP - L0_APFP;
+        doublereal d = 0.0, l = 0.0;
+
+        if (h > 1e-6 && std::fabs(delta) < L_orig * 0.5) {
+            d = delta / h;
+            l = L_orig / h;
+
+            if (d > 0.0 && l > 1.0 && d < (std::sqrt(l*l - 1.0) - (l - 1.0))) {
+                doublereal x_param = 0.0, p0 = 0.0, H = 0.0;
+                doublereal x1 = 1e-6, x2 = 1000.0;
+
+                x_param = rtsafe_catenary_local(x1, x2, xacc_orig, d, l, p0);
+                H = x_param * w_orig * h;
+
+                if (H > 1e-6) {
+                    use_simple_initialization = false;
+                    doublereal a = H / w_orig;
+
+                    for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+                        unsigned int seg_idx = i+1;
+                        doublereal s = L_orig * (static_cast<doublereal>(Seg_param - seg_idx) / static_cast<doublereal>(Seg_param));
+
+                        doublereal x_local = 0.0, z_local = 0.0;
+
+                        if (p0 < 1e-6) {
+                            doublereal beta = s / a;
+                            if (beta < 10.0) { // より安全な範囲に制限
+                                x_local = a * myasinh_local(std::sinh(L_APFP / a) - std::sinh(beta));
+                                z_local = a * (std::cosh((L_APFP - x_local) / a) - std::cosh(L_APFP / a));
+                            } else {
+                                use_simple_initialization = true;
+                                break;
+                            }
+                        }
+
+                        virtual_nodes[i].position = anchor_pos + horizontal_dir * x_local + Vec3(0.0, 0.0, z_local);
+                        virtual_nodes[i].velocity = Vec3(0.0, 0.0, 0.0);
+                        virtual_nodes[i].active = true;
+                    }
+                }
+            } 
+        }
+    } catch (...) {
+        use_simple_initialization = true;
+    }
+
+    // 簡単な線形補間による初期化（フォールバック）
+    if (use_simple_initialization) {
+        for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+            doublereal ratio = static_cast<doublereal>(i + 1) / static_cast<doublereal>(Seg_param);
+            
+            // 線形補間
+            virtual_nodes[i].position = fairlead_pos + (anchor_pos - fairlead_pos) * ratio;
+            
+            // 重力による垂れ下がりを追加
+            doublereal sag = 0.1 * L_orig * ratio * (1.0 - ratio); // 簡単な放物線近似
+            virtual_nodes[i].position += Vec3(0.0, 0.0, -sag);
+            
+            // 海底との接触チェック
+            if (virtual_nodes[i].position.dGet(3) < seabed_z_param) {
+                virtual_nodes[i].position = Vec3(
+                    virtual_nodes[i].position.dGet(1), 
+                    virtual_nodes[i].position.dGet(2), 
+                    seabed_z_param + 0.1 // 少し上に配置
+                );
+            }
+            
+            virtual_nodes[i].velocity = Vec3(0.0, 0.0, 0.0);
+            virtual_nodes[i].active = true;
+        }
+    }
+
+}
+
+
+// =========== 自由度関連 ===================
+
+void ModuleCatenaryLM::WorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
+
+    *piNumRows = 3;
+    *piNumCols = 3;
+}
+
+void ModuleCatenaryLM::InitialWorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
+    *piNumRows = 3;
+    *piNumCols = 3;
+}
+
+unsigned int ModuleCatenaryLM::iGetNumConnectedNodes(void) const {
+    return 1; // フェアリードのみ
+}
+
+unsigned int ModuleCatenaryLM::iGetInitialNumDof(void) const {
+    return 0; // 3 かも？
+}
+
+const Node* ModuleCatenaryLM::pGetNode(unsigned int i) const {
+    if (i == 1) {
+        return fairlead_node;
+    }
+    return nullptr;
+}
+
+// 非 const 版：ノードの状態を変更することが可能
+Node* ModuleCatenaryLM::pGetNode(unsigned int i) {
+    if (i == 1) {
+        return fairlead_node;
+    }
+    return nullptr;
+}
+
+// ========= 具体的な初期化 ===========
+void ModuleCatenaryLM::SetInitialValue(VectorHandler& X, VectorHandler& XP) {
+    InitializeVirtualNodes();
+}
+
+SubVectorHandler& ModuleCatenaryLM::InitialAssRes(
+    SubVectorHandler& WorkVec,
+    const VectorHandler& XCurr
+) {
+    WorkVec.ResizeReset(0);
+    return WorkVec;
+}
+
+VariableSubMatrixHandler& ModuleCatenaryLM::InitialAssJac(
+    VariableSubMatrixHandler& WorkMat,
+    const VectorHandler& /*X*/
+) {
+    WorkMat.SetNullMatrix();
+    return WorkMat;
+}
+
+// ======= AssRes ========
+
+SubVectorHandler& ModuleCatenaryLM::AssRes(
+    SubVectorHandler& R,
+    doublereal dCoef,
+    const VectorHandler& XCurr,
+    const VectorHandler& XPrimeCurr
+) {
+    
+    if (fairlead_node == nullptr) {
+        silent_cerr("ModuleCatenaryLM(" << GetLabel() << "): "
+                   "fairlead node not available" << std::endl);
+        throw ErrGeneric(MBDYN_EXCEPT_ARGS);
+    }
+
+    const doublereal fsf = FSF_orig.dGet();
+
+    // フェアリーダーノードの3自由度のみ
+    R.ResizeReset(3);
+
+    // フェアリーダーノードのインデックス設定
+    integer iFirstIndex = fairlead_node->iGetFirstPositionIndex();
+    R.PutRowIndex(1, iFirstIndex + 1);
+    R.PutRowIndex(2, iFirstIndex + 2);
+    R.PutRowIndex(3, iFirstIndex + 3);
+
+    // 仮想ノードの状態更新
+    UpdateVirtualNodes(dCoef, XCurr, XPrimeCurr);
+
+    // フェアリーダーノードに作用する力の計算
+    const Vec3& fairlead_pos = fairlead_node->GetXCurr();
+    const Vec3& fairlead_vel = fairlead_node->GetVCurr();
+
+    // 最初の仮想ノードとの間の軸力
+    Vec3 F_mooring(0.0, 0.0, 0.0);
+    
+    if (virtual_nodes.size() > 0 && virtual_nodes[0].active) {
+        Vec3 dx = virtual_nodes[0].position - fairlead_pos;
+        doublereal l = dx.Norm();
+        
+        if (l > 1e-12) {
+            Vec3 t = dx / l;
+            
+            doublereal L0 = P_param[0].L0_seg;
+            doublereal EA = P_param[0].EA_seg;
+            doublereal CA = P_param[0].CA_seg;
+            
+            doublereal Fel = EA * (l - L0) / L0;
+            Vec3 dv = virtual_nodes[0].velocity - fairlead_vel;
+            doublereal vrel = dv(1)*t(1) + dv(2)*t(2) + dv(3)*t(3);
+            doublereal Fd = vrel * CA;
+            
+            doublereal Fax = Fel + Fd;
+            if (Fax < 0.0) Fax = 0.0;
+            
+            F_mooring = t * (Fax * fsf);
+        }
+    }
+
+    // フェアリーダーノードに係留力を適用
+    R.PutCoef(1, F_mooring.dGet(1));
+    R.PutCoef(2, F_mooring.dGet(2));
+    R.PutCoef(3, F_mooring.dGet(3));
+
+    return R;
+}
+
+// ========= AssJac =========
+
+VariableSubMatrixHandler& ModuleCatenaryLM::AssJac(
+    VariableSubMatrixHandler& WH,
+    doublereal dCoef,
+    const VectorHandler& XCurr, 
+    const VectorHandler& XPrimeCurr
+) {
+    if (fairlead_node == nullptr) {
+        silent_cerr("ModuleCatenaryLM(" << GetLabel() << "): "
+                   "fairlead node not available" << std::endl);
+        throw ErrGeneric(MBDYN_EXCEPT_ARGS);
+    }
+
+    // フェアリーダーノードの3x3剛性行列
+    FullSubMatrixHandler& K = WH.SetFull();
+    K.ResizeReset(3, 3);
+
+    // フェアリーダーノードのインデックス設定
+    integer iFirstIndex = fairlead_node->iGetFirstPositionIndex();
+    for (int i = 0; i < 3; ++i) {
+        K.PutRowIndex(i + 1, iFirstIndex + i + 1);
+        K.PutColIndex(i + 1, iFirstIndex + i + 1);
+    }
+
+    // 係留力の剛性計算
+    if (virtual_nodes.size() > 0 && virtual_nodes[0].active) {
+        const Vec3& fairlead_pos = fairlead_node->GetXCurr();
+        Vec3 dx = virtual_nodes[0].position - fairlead_pos;
+        doublereal l = dx.Norm();
+        
+        if (l > 1e-12) {
+            Vec3 t = dx / l;
+            
+            doublereal EA = P_param[0].EA_seg;
+            doublereal CA = P_param[0].CA_seg;
+            doublereal L0 = P_param[0].L0_seg;
+            
+            doublereal k_ax = EA / L0;
+            doublereal c_ax = -CA * dCoef;
+            
+            doublereal Fel = EA * (l - L0) / L0;
+            if (Fel > 0.0) {
+                // 軸方向剛性と幾何剛性
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 3; ++c) {
+                        doublereal K_tt = (k_ax + c_ax) * t(r+1) * t(c+1);
+                        doublereal delta = (r == c) ? 1.0 : 0.0;
+                        doublereal Kg = (Fel / l) * (delta - t(r+1) * t(c+1));
+                        
+                        K.PutCoef(r + 1, c + 1, -(K_tt + Kg)); // 負号：係留力は復元力
+                    }
+                }
+            }
+        }
+    }
+
+    return WH;
+}
+
 
 // rtsafe_catenary_local 関数関数から呼び出される：f(x) とその導関数を求める
 void ModuleCatenaryLM::funcd_catenary_local(double x_param, double xacc, double &f_val, double &df_val, double d_geom, double l_geom, double &p0_angle) {
@@ -526,127 +777,6 @@ double ModuleCatenaryLM::rtsafe_catenary_local(double x1_bounds, double x2_bound
     throw ErrInterrupted(MBDYN_EXCEPT_ARGS);
 }
 
-// 要素に関連する自由度の初期値を設定するために MBDyn から呼び出す
-// N_nodes_params に格納されているノードの初期位置や初期速度を計算
-// フェアリーダー点座標とアンカー点座標からラインの初期形状を計算し，各内部ノードの初期座標を決定する
-void ModuleCatenaryLM::SetInitialValue(VectorHandler& X, VectorHandler& XP) {
-    
-    const Vec3& fairlead_pos = N_nodes_param[0] -> GetXCurr(); // フェアリーダーノードの初期位置を取得
-    Vec3 anchor_pos(APx_orig, APy_orig, APz_orig); // アンカーの位置を取得
-
-    Vec3 FP_AP = fairlead_pos - anchor_pos; // アンカーを原点とした座標系でのフェアリーダーの位置ベクトル
-
-    doublereal h = std::fabs(FP_AP.dGet(3)); // FP, AP の鉛直距離の計算
-    doublereal L_APFP = std::sqrt(std::pow(FP_AP.dGet(1), 2.0) + std::pow(FP_AP.dGet(2), 2.0)); // FP, AP の水平距離の計算
-
-    // 水平面で見て，AP から FP に向かう単位ベクトル
-    Vec3 horizontal_dir(0.0, 0.0, 0.0);
-    if (L_APFP > 1e-12) {
-        horizontal_dir = Vec3(FP_AP.dGet(1) / L_APFP, FP_AP.dGet(2) / L_APFP, 0.0);
-    }
-
-    // カテナリー理論に用いるパラメータ
-    doublereal L0_APFP = L_orig - h; // 水平張力が 0 になるときの水平距離
-    doublereal delta = L_APFP - L0_APFP;
-    doublereal d = 0.0;
-    doublereal l = 0.0;
-
-    if (h > 1e-12) {
-        d = delta / h;
-        l = L_orig / h;
-    }
-
-    // 水平張力パラメータ x = H /(w*h) について
-    doublereal x_param = 0.0;
-    doublereal p0 = 0.0;
-    doublereal H = 0.0; // 水平張力
-    doublereal V = 0.0; // 鉛直張力
-
-    if (d <= 0.0) {
-        // たるんでいる場合
-        H = 0.0;
-        V = w_orig * h;
-    } else if (h > 1e-12 && d < (std::sqrt(l*l - 1.0) - (l - 1.0))) {
-        // カテナリー形状
-        doublereal x1 = 0.0;
-        doublereal x2 = 1.0e6;
-        x_param = rtsafe_catenary_local(x1, x2, xacc_orig, d, l, p0);
-        H = x_param * w_orig * h;
-        V = w_orig * h * std::sqrt(1.0 + 2.0*x_param);
-    }
-
-    // ここから各内部ノードについて計算する
-    std::vector<Vec3> node_positions(Seg_param); // 各内部ノードの初期位置
-    node_positions[0] = fairlead_pos; // FP
-
-    if (H > 1e-12) {
-        // カテナリー形状に沿って配置
-        doublereal a = H / w_orig; // カテナリーパラメータ
-
-        // AP からの弧長を計算
-        std::vector<doublereal> arc_length(Seg_param + 1);
-        arc_length[0] = 0.0; // AP
-        
-        for (unsigned int i = 1; i <= Seg_param; ++i) {
-            arc_length[i] = L_orig * static_cast<doublereal>(i) / static_cast<doublereal>(Seg_param);
-        }
-
-        // 弧長に対応する位置の計算
-        for (unsigned int i = 1; i < Seg_param; ++i) {
-            doublereal s = L_orig - arc_length[i]; // FP からの弧長
-
-            // カテナリー曲線に沿った位置の計算
-            doublereal x_local = 0.0;
-            doublereal z_local = 0.0;
-
-            if (p0 < 1e-12) {
-                // 海底接触無しの場合
-                doublereal beta = s / a;
-                if (beta < 50.0) {
-                    x_local = a*myasinh_local(std::sinh(L_APFP / a) - std::sinh(beta));
-                    z_local = a*(std::cosh((L_APFP - x_local) / a) - std::cosh(L_APFP / a));
-                } else {
-                    x_local = L_APFP - s;
-                    z_local = 0.0;
-                }
-            } else {
-                // 海底接触ありの場合（簡略化）
-                doublereal ratio = static_cast<doublereal>(i) / static_cast<doublereal>(Seg_param);
-                x_local = L_APFP * (1.0 - ratio);
-                z_local = h * (1.0 - ratio);
-            }
-
-            // グローバル座標系における各ノードの位置
-            node_positions[i] = anchor_pos + horizontal_dir*x_local + Vec3(0.0, 0.0, z_local);
-        }
-    } else {
-        // 垂直に垂れ下がる場合
-        for (unsigned int i = 1; i < Seg_param; ++i) {
-            double ratio = static_cast<doublereal>(i) / static_cast<doublereal>(Seg_param);
-            doublereal z_offset = -h * ratio;
-            node_positions[i] = fairlead_pos + Vec3(0.0, 0.0, z_offset);
-        }
-    }
-
-    // 各ノードの初期位置と速度を設定
-    for (unsigned int i = 1; i < Seg_param; ++i) {
-        if (N_nodes_param[i] != 0) {
-
-            // 位置の設定
-            integer iFirstPosIndex = N_nodes_param[i] -> iGetFirstPositionIndex();
-            X.PutCoef(iFirstPosIndex + 1, node_positions[i].dGet(1));  // X 座標
-            X.PutCoef(iFirstPosIndex + 2, node_positions[i].dGet(2));  // Y 座標
-            X.PutCoef(iFirstPosIndex + 3, node_positions[i].dGet(3));  // Z 座標
-
-            // 速度は 0 で初期化
-            integer iFirstVelIndex = N_nodes_param[i]->iGetFirstMomentumIndex();
-            XP.PutCoef(iFirstVelIndex + 1, 0.0);  // Vx = 0
-            XP.PutCoef(iFirstVelIndex + 2, 0.0);  // Vy = 0
-            XP.PutCoef(iFirstVelIndex + 3, 0.0);  // Vz = 0
-        }
-    }
-}
-
 // Outputメソッド: シミュレーション結果の出力
 void ModuleCatenaryLM::Output(OutputHandler& OH) const {
     if (!bToBeOutput()) return;
@@ -655,290 +785,62 @@ void ModuleCatenaryLM::Output(OutputHandler& OH) const {
     const integer lbl = GetLabel();
 
     // フェアリーダ座標
-    if (N_nodes_param.empty() || N_nodes_param[0] == 0) {
+    if (fairlead_node == nullptr) {
         OH.Loadable() << lbl << "[Error] Fairlead node not available for output.\n";
         return;
     }
-    const Vec3 posFL = N_nodes_param[0] -> GetXCurr();
+    const Vec3 posFL = fairlead_node -> GetXCurr();
 
     // フェアリーダに作用する軸方向力
     Vec3 Ffl(0.0, 0.0, 0.0);
-    if (N_nodes_param.size() >= 2 && N_nodes_param[1] != 0) {
-        Vec3 x0 = posFL;
-        Vec3 x1 = N_nodes_param[1] -> GetXCurr();
-        Vec3 v0 = N_nodes_param[0] -> GetVCurr();
-        Vec3 v1 = N_nodes_param[1] -> GetVCurr();
-
-        Vec3 dx = x1 - x0;
+    if (virtual_nodes.size() > 0 && virtual_nodes[0].active) {
+        Vec3 dx = virtual_nodes[0].position - posFL;
         doublereal l = dx.Norm();
-        if (l > 1.e-12) {
+        if (l > 1e-12) {
             Vec3 t = dx / l;
-
+            
             doublereal L0 = P_param[0].L0_seg;
             doublereal EA = P_param[0].EA_seg;
-            doublereal CA = P_param[0].CA_seg;
-
+            
             doublereal Fel = EA * (l - L0) / L0;
-            Vec3 dv = v1 - v0;
-            doublereal vrel = dv(1)*t(1) + dv(2)*t(2) + dv(3)*t(3);
-            doublereal Fd = vrel + CA;
-            doublereal Fax = Fel + Fd;
-            if (Fax < 0.0) Fax = 0.0;
-
-            Vec3 F = t * Fax;
-            const doublereal fsf = FSF_orig.dGet();
-            Ffl = F * fsf;
+            if (Fel > 0.0) {
+                const doublereal fsf = FSF_orig.dGet();
+                Ffl = t * (Fel * fsf);
+            }
         }
     }
+    
     OH.Loadable() << lbl << " FairleadPos "
                   << posFL.dGet(1) << " "
                   << posFL.dGet(2) << " "
                   << posFL.dGet(3) << " FairleadForce "
                   << Ffl.dGet(1)  << " "
                   << Ffl.dGet(2)  << " "
-                  << Ffl.dGet(3)  << '\n';
-}
+                  << Ffl.dGet(3);
 
-// ================ ヤコビアン行列と残差ベクトルの次元を設定 ====================
-// origin ではフェアリーダーポイントのみで 6 自由度で扱っていたが，ランプドマス法で内部ノードも全て管理する場合は大きく変わる
-void ModuleCatenaryLM::WorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
-    unsigned int num_nodes = Seg_param;
-    unsigned int dof_per_node = 3;
+    /* // 仮想ノードの位置も出力する場合
 
-    *piNumRows = num_nodes * dof_per_node;
-    *piNumCols = num_nodes * dof_per_node;
-}
-
-void ModuleCatenaryLM::InitialWorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
-    unsigned int num_nodes = Seg_param;
-    unsigned int dof_per_node = 3;
-
-    *piNumRows = num_nodes * dof_per_node;
-    *piNumCols = num_nodes * dof_per_node;
-}
-
-// ================ 残差 ==========================
-SubVectorHandler& ModuleCatenaryLM::AssRes(
-    SubVectorHandler& R,
-    doublereal dCoef,
-    const VectorHandler& XCurr,
-    const VectorHandler& XPrimeCurr
-) {
-
-    const doublereal fsf = FSF_orig.dGet();
-
-    const unsigned int ndof_tot = Seg_param * 3;
-    R.ResizeReset(ndof_tot);
-
-    for (unsigned int i = 0; i < Seg_param; ++i) {
-        
-        const unsigned int idx = i*3;
-
-        // ====== 重力 + 慣性：ノード単位 ======
-        const Vec3 Fg(0.0, 0.0, -node_mass_param[i]*g_gravity_param);
-        Vec3 Fg_scaled = Fg*fsf;
-        R.Add(idx+1, Fg_scaled);
-
-        // 慣性 -M * a_lumped (a = dCoef*XPrime)
-        const Vec3 a_like(XPrimeCurr(idx + 1), XPrimeCurr(idx + 2), XPrimeCurr(idx + 3));
-        const Vec3 Fi = - a_like * dCoef * node_mass_param[i];
-        R.Add(idx+1, Fi);
-
-        // 海底接触があるならノード単位で反力を追加（押し返す）
-        const doublereal z_i = N_nodes_param[i] -> GetXCurr().dGet(3);
-        if (z_i < seabed_z_param) {
-            const doublereal pen = seabed_z_param - z_i; // 海底侵入量（z 座標的な意味）
-            const doublereal vz = N_nodes_param[i] -> GetVCurr().dGet(3); // 海底座標のクラス定義で下向き負，上向き正を決めている
-            const doublereal Fz = Kseabed_param * pen - Cseabed_param * vz; // ばね + 減衰
-
-            Vec3 Fseabed(0.0, 0.0, Fz*fsf);
-            R.Add(idx+1, Fseabed); // +Z 方向の反力
+    OH.Loadable() << " VirtualNodes " << virtual_nodes.size();
+    for (unsigned int i = 0; i < virtual_nodes.size() && i < 5; ++i) { // 最初の5個のみ
+        if (virtual_nodes[i].active) {
+            OH.Loadable() << " " << virtual_nodes[i].position.dGet(1)
+                         << " " << virtual_nodes[i].position.dGet(2)
+                         << " " << virtual_nodes[i].position.dGet(3);
         }
     }
     
-    // ====== 軸方向の EA + CA：セグメント単位 ======
-
-    for (unsigned int s = 0; s < Seg_param - 1; ++s) {
-        const unsigned int i = s; // 左のノードのインデックス
-        const unsigned int j = s + 1; // 右のノードのインデックス
-
-        // 現在の位置と速度
-        const Vec3 xi = N_nodes_param[i]->GetXCurr();
-        const Vec3 xj = N_nodes_param[j]->GetXCurr();
-        const Vec3 vi = N_nodes_param[i]->GetVCurr();
-        const Vec3 vj = N_nodes_param[j]->GetVCurr();
-
-        const Vec3 dx = xj - xi;
-        const doublereal l = dx.Norm();
-        if (l < 1.e-12) continue;
-
-        const Vec3 t = dx / l;
-
-        // 物性
-        const doublereal L0 = P_param[s].L0_seg;
-        const doublereal EA = P_param[s].EA_seg;
-        const doublereal CA = P_param[s].CA_seg;
-
-        // 弾性力と減衰力
-        const doublereal Fel = EA * (l - L0) / L0;
-        const Vec3 dv = vj - vi;
-        const doublereal vrel = dv(1)*t(1) + dv(2)*t(2) + dv(3)*t(3);
-        const doublereal Fd = vrel * CA;
-
-        doublereal Faxial = Fel + Fd; // 弾性 + 減衰合力
-        if (Faxial < 0.0) Faxial = 0.0; // 圧縮不可
-        /* 
-        // API の確認が取れたら実装する？　符号変化時の再線形化
-        bool slack_now = (Fax <= 0.0);
-        if (slack_now != segSlack_prev[s]) { // 状況が変わった場合
-            pHints->bSetNotLinear(); // 再線形化を要求
-            segSlack_prev[s] = slack_now;
-        }
-        if (slack_now) continue;
-        */
-        const Vec3 F = t * (Faxial * fsf); // 軸力ベクトル
-
-        if (Faxial > 0.0) { // Faxial == 0 のときは何もしない
-            const unsigned int idx_i = i*3;
-            const unsigned int idx_j = j*3;
-
-            R.Add(idx_i+1, -F); // 左ノード
-            R.Add(idx_j+1, F); // 右ノード
-        }
-    }
-
-    return R;
+    */
+    
+    OH.Loadable() << '\n';
 }
 
-SubVectorHandler& ModuleCatenaryLM::InitialAssRes(
-    SubVectorHandler& WorkVec,
-    const VectorHandler& XCurr
-) {
-    return WorkVec;
-}
 
-// ============== 全体ヤコビアン ====================
-VariableSubMatrixHandler& ModuleCatenaryLM::AssJac(
-    VariableSubMatrixHandler& WH,
-    doublereal dCoef,
-    const VectorHandler& XCurr, 
-    const VectorHandler& XPrimeCurr
-) {
-    const integer ndof_tot = Seg_param * 3; // ベクトルの大きさを決める int 変数を宣言して初期化
-    FullSubMatrixHandler& K = WH.SetFull();
-    K.ResizeReset(ndof_tot, ndof_tot); // 初期化（0 が入っている）
-
-    // ============================
-    // 海底ばね・ダンパ：各ノードの z 行に対角係数を追加：ノードループ
-    // ============================
-
-    for (unsigned int i = 0; i < Seg_param; ++i) {
-        const unsigned int idx = i*3;
-        const doublereal z_i = N_nodes_param[i] -> GetXCurr().dGet(3);
-
-        if (z_i < seabed_z_param) { // z 座標によって付加
-            const doublereal k_sea = Kseabed_param;
-            const doublereal c_sea = - Cseabed_param * dCoef;
-
-            K.PutCoef(idx+3, idx+3, k_sea + c_sea);
-        }
-    }
-
-    // =============================
-    // EA / CA + 幾何剛性：セグメントループ
-    // =============================
-    for (unsigned int s = 0; s < Seg_param - 1; ++s) {
-
-        // 隣接ノード index
-        const unsigned int i = s;
-        const unsigned int j = s + 1;
-        const unsigned int row_i = i*3;
-        const unsigned int row_j = j*3;
-
-        // ======= 位置・速度・方向 ========
-        Vec3 xi = N_nodes_param[i] -> GetXCurr();
-        Vec3 xj = N_nodes_param[j] -> GetXCurr();
-        Vec3 vi = N_nodes_param[i] -> GetVCurr();
-        Vec3 vj = N_nodes_param[j] -> GetVCurr();
-
-        Vec3 dx = xj - xi;
-        doublereal l = dx.Norm();
-        if (l < 1.e-12) continue;
-        Vec3 t = dx / l; // 単位ベクトル
-
-        // ====== 物性と係数 =======
-        doublereal EA = P_param[s].EA_seg;
-        doublereal CA = P_param[s].CA_seg;
-        doublereal L0 = P_param[s].L0_seg;
-
-        const doublereal k_ax = EA / L0;
-        const doublereal c_ax = - CA * dCoef; // ここで符号を揃えた
-
-        // ====== 軸力 Fel ========
-        doublereal Fel = EA * (l - L0) / L0;
-        if (Fel <= 0.0) continue; // 張力 0 と圧縮は剛性無しと判断
-
-        // 基本ブロック Kt = (k_ax + c_ax)・(t × t)
-        doublereal Klocal[3][3];
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 3; ++c) {
-                
-                // t⊗t 項：軸方向剛性 + 減衰 
-                doublereal K_tt = (k_ax + c_ax) * t(r+1) * t(c+1);
-
-                // 幾何剛性 kg·(I − t⊗t)
-                doublereal delta = (r == c) ? 1.0 : 0.0;
-                doublereal Kg = (Fel / l) * (delta - t(r+1) * t(c+1));
-                
-                Klocal[r][c] = K_tt + Kg;
-            }
-        }
-
-        // 全体ヤコビアン行列の対応する 3x3 並進ブロックに K_local_3x3 を組み込む
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 3; ++c) {
-
-                const doublereal val = Klocal[r][c];
-
-                // 左節点 i
-                K.PutCoef(row_i + 1 + r, row_i + 1 + c, val);
-                K.PutCoef(row_i + 1 + r, row_j + 1 + c, - val);
-
-                // 右節点 j : 対称性で符号反転
-                K.PutCoef(row_j + 1 + r, row_i + 1 + c, - val);
-                K.PutCoef(row_j + 1 + r, row_j + 1 + c, val);
-            }
-        }
-    }
-
-    return WH;
-}
-
-VariableSubMatrixHandler& ModuleCatenaryLM::InitialAssJac(
-    VariableSubMatrixHandler& WorkMat,
-    const VectorHandler& /*X*/
-) {
-    WorkMat.SetNullMatrix();
-    return WorkMat;
-}
-
-// この要素がMBDynのモデル内で接続している，あるいは管理しているノードの数を返す
-// MBDyn は要素とノード間の接続情報を構築・管理するためにこの情報を利用する
-unsigned int ModuleCatenaryLM::iGetNumConnectedNodes(void) const {
-    return Seg_param; // これで完成のはず
-}
-
+// =========== その他の関数 必要に応じて編集する ============
 // 後回し
 std::ostream& ModuleCatenaryLM::Restart(std::ostream& out) const {
     out << "# ModuleCatenaryLM (Label: " << GetLabel() << ") Restart: Not implemented yet." << std::endl;
     return out;
 }
-
-// 初期化フェーズで特別な解析をするなら，初期のみ自由度を付与する
-unsigned int ModuleCatenaryLM::iGetInitialNumDof(void) const {
-    return Seg_param * 3;
-}
-
 
 void ModuleCatenaryLM::SetValue(
     DataManager* /*pDM*/,
@@ -950,23 +852,189 @@ void ModuleCatenaryLM::SetValue(
     // 重力荷重は AssRes 内で扱うか，要素外で扱うのでここは空実装
 }
 
-// ==== ModuleCatenaryLM 要素が管理している i 番目のノードへのポインタを返すためのインターフェース ====
-// MBDyn のソルバーや他のモジュールが，この要素に関連付けられたノードの情報（位置・速度・力など）にアクセスしたり，ノードの状態を変更したりするために使用する
-// const 版：この関数自身が const であり，この関数を呼び出しても ModuleCatenaryLM オブジェクトの状態は変更されない
-const Node* ModuleCatenaryLM::pGetNode(unsigned int i) const {
-    if (i == 0 || i > N_nodes_param.size() || N_nodes_param[i-1] == NULL) {
-        return NULL;
+// ========= 内部ノードのアップデート ========
+
+void ModuleCatenaryLM::UpdateVirtualNodes(doublereal dCoef, const VectorHandler& XCurr, const VectorHandler& XPrimeCurr) {
+    
+    if (fairlead_node == nullptr) return;
+
+    // フェアリーダーの現在状態を取得
+    const Vec3& fairlead_pos = fairlead_node->GetXCurr();
+    const Vec3& fairlead_vel = fairlead_node->GetVCurr();
+
+    Vec3 anchor_pos(APx_orig, APy_orig, APz_orig);
+
+    const doublereal dt = 1.0 / std::max(std::fabs(dCoef), 1e-6);
+    const doublereal max_dt = 0.001;
+    const doublereal actual_dt = std::min(dt, max_dt);
+
+    const int sub_steps = std::max(1, static_cast<int>(actual_dt / 0.0005));
+    const doublereal sub_dt = actual_dt / sub_steps;
+
+    for (int sub_step = 0; sub_step < sub_steps; ++sub_step) {
+        for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+            if (!virtual_nodes[i].active) continue;
+
+            // 重力
+            Vec3 F_gravity(0.0, 0.0, -virtual_nodes[i].mass * g_gravity_param);
+
+            // 海底反力（より安定な実装）
+            Vec3 F_seabed(0.0, 0.0, 0.0);
+            if (virtual_nodes[i].position.dGet(3) < seabed_z_param) {
+                doublereal pen = std::max(0.0, seabed_z_param - virtual_nodes[i].position.dGet(3));
+                doublereal vz = virtual_nodes[i].velocity.dGet(3);
+                
+                // 海底反力を制限して数値不安定を防ぐ
+                doublereal Fz = std::min(Kseabed_param * pen - Cseabed_param * vz, 
+                                       virtual_nodes[i].mass * g_gravity_param * 10.0); // 重力の10倍まで
+                F_seabed = Vec3(0.0, 0.0, std::max(0.0, Fz)); // 下向きの力は制限
+            }
+
+            // 隣接ノードとの軸力計算
+            Vec3 F_axial(0.0, 0.0, 0.0);
+
+            // 左隣（フェアリーダーまたは他の仮想ノード）
+            Vec3 left_pos, left_vel;
+            if (i == 0) {
+                left_pos = fairlead_pos;
+                left_vel = fairlead_vel;
+            } else {
+                left_pos = virtual_nodes[i - 1].position;
+                left_vel = virtual_nodes[i - 1].velocity;
+            }
+
+            Vec3 dx_left = virtual_nodes[i].position - left_pos;
+            doublereal l_left = dx_left.Norm();
+
+            if (l_left > 1e-12) {
+                Vec3 t_left = dx_left / l_left;
+
+                unsigned int seg_idx_left = (i < P_param.size()) ? i : (P_param.size() - 1);
+
+                doublereal L0 = P_param[seg_idx_left].L0_seg;
+                doublereal EA = P_param[seg_idx_left].EA_seg;
+                doublereal CA = P_param[seg_idx_left].CA_seg;
+
+                // ひずみを制限して大変形を防ぐ
+                doublereal strain = (l_left - L0) / L0;
+                strain = std::max(-0.5, std::min(strain, 2.0)); // ひずみを±50%〜200%に制限
+                
+                doublereal Fel = EA * strain;
+                Vec3 dv = virtual_nodes[i].velocity - left_vel;
+                doublereal vrel = dv(1)*t_left(1) + dv(2)*t_left(2) + dv(3)*t_left(3);
+                doublereal Fd = vrel * CA;
+
+                doublereal Fax = Fel + Fd;
+                
+                // 軸力の上限を設定（質量に比例した合理的な値）
+                doublereal max_force = virtual_nodes[i].mass * g_gravity_param * 100.0; // 重力の100倍まで
+                Fax = std::max(-max_force, std::min(Fax, max_force));
+                
+                if (Fax < 0.0) Fax = 0.0; // 圧縮力は無効
+
+                F_axial += t_left * (-Fax); // 引張方向
+            }
+
+            // 右隣（アンカーまたは他の仮想ノード）
+            Vec3 right_pos;
+            Vec3 right_vel(0.0, 0.0, 0.0);
+            if (i == virtual_nodes.size() - 1) {
+                right_pos = Vec3(APx_orig, APy_orig, APz_orig); // アンカー
+                right_vel = Vec3(0.0, 0.0, 0.0); // アンカーは固定
+            } else {
+                right_pos = virtual_nodes[i + 1].position;
+                right_vel = virtual_nodes[i + 1].velocity;
+            }
+
+            Vec3 dx_right = right_pos - virtual_nodes[i].position;
+            doublereal l_right = dx_right.Norm();
+            if (l_right > 1e-12) {
+                Vec3 t_right = dx_right / l_right;
+                unsigned int seg_idx_right = (i + 1 < P_param.size()) ? (i + 1) : (P_param.size() - 1);
+                
+                doublereal L0 = P_param[seg_idx_right].L0_seg;
+                doublereal EA = P_param[seg_idx_right].EA_seg;
+                doublereal CA = P_param[seg_idx_right].CA_seg;
+
+                // ひずみを制限して大変形を防ぐ
+                doublereal strain = (l_right - L0) / L0;
+                strain = std::max(-0.5, std::min(strain, 2.0)); // ひずみを±50%〜200%に制限
+                
+                doublereal Fel = EA * strain;
+                Vec3 dv = right_vel - virtual_nodes[i].velocity;
+                doublereal vrel = dv(1)*t_right(1) + dv(2)*t_right(2) + dv(3)*t_right(3);
+                doublereal Fd = vrel * CA;
+
+                doublereal Fax = Fel + Fd;
+                
+                // 軸力の上限を設定
+                doublereal max_force = virtual_nodes[i].mass * g_gravity_param * 100.0;
+                Fax = std::max(-max_force, std::min(Fax, max_force));
+                
+                if (Fax < 0.0) Fax = 0.0; // 圧縮力は無効
+
+                F_axial += t_right * Fax;
+            }
+
+            Vec3 F_total = F_gravity + F_seabed + F_axial;
+
+            // 加速度計算
+            if (virtual_nodes[i].mass > 1e-12) {
+                virtual_nodes[i].acceleration = F_total / virtual_nodes[i].mass;
+                
+                // 加速度を制限（急激な変化を防ぐ）
+                doublereal acc_norm = virtual_nodes[i].acceleration.Norm();
+                doublereal max_acc = 100.0 * g_gravity_param; // 重力加速度の100倍まで
+                if (acc_norm > max_acc) {
+                    virtual_nodes[i].acceleration = virtual_nodes[i].acceleration * (max_acc / acc_norm);
+                }
+            } else {
+                virtual_nodes[i].acceleration = Vec3(0.0, 0.0, 0.0);
+            }
+
+            // 速度更新（減衰を追加して安定性向上）
+            doublereal damping_factor = 0.99; // 軽微な数値減衰
+            virtual_nodes[i].velocity = virtual_nodes[i].velocity * damping_factor + 
+                                      virtual_nodes[i].acceleration * sub_dt;
+            
+            // 速度制限
+            doublereal vel_norm = virtual_nodes[i].velocity.Norm();
+            doublereal max_vel = 50.0; // 最大速度 50 m/s
+            if (vel_norm > max_vel) {
+                virtual_nodes[i].velocity = virtual_nodes[i].velocity * (max_vel / vel_norm);
+            }
+
+            // 位置更新
+            Vec3 old_position = virtual_nodes[i].position;
+            virtual_nodes[i].position += virtual_nodes[i].velocity * sub_dt;
+            
+            // 位置の妥当性チェック（急激な移動を防ぐ）
+            Vec3 displacement = virtual_nodes[i].position - old_position;
+            doublereal disp_norm = displacement.Norm();
+            doublereal max_disp = L_orig * 0.1; // 全長の10%まで
+            if (disp_norm > max_disp) {
+                virtual_nodes[i].position = old_position + displacement * (max_disp / disp_norm);
+                // 速度も調整
+                virtual_nodes[i].velocity = virtual_nodes[i].velocity * 0.5;
+            }
+            
+            // 海底貫入の防止（硬い制約）
+            if (virtual_nodes[i].position.dGet(3) < seabed_z_param) {
+                virtual_nodes[i].position = Vec3(virtual_nodes[i].position.dGet(1), 
+                                                virtual_nodes[i].position.dGet(2), 
+                                                seabed_z_param);
+                // Z方向速度をゼロにする
+                if (virtual_nodes[i].velocity.dGet(3) < 0.0) {
+                    virtual_nodes[i].velocity = Vec3(virtual_nodes[i].velocity.dGet(1),
+                                                   virtual_nodes[i].velocity.dGet(2),
+                                                   0.0);
+                }
+            }
+        }
     }
-    return N_nodes_param[i-1];
 }
 
-// 非 const 版：ノードの状態を変更することが可能
-Node* ModuleCatenaryLM::pGetNode(unsigned int i) {
-    if (i == 0 || i > N_nodes_param.size() || N_nodes_param[i-1] == NULL) {
-        return NULL;
-    }
-    return N_nodes_param[i-1];
-}
+// ========== モジュール登録関数 ============
 
 bool catenary_lm_set(void) {
 #ifdef DEBUG
