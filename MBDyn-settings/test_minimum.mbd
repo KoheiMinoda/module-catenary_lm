@@ -1,11 +1,12 @@
+# 最小限のテスト版（derivatives coefficient の問題を回避）
 
 module load: "/usr/local/mbdyn/libexec/libmodule-catenary_lm";
 
-set: real FinalTime = 0.01;
+set: real FinalTime = 0.1;
 set: real TimeStep = 0.0001;
-set: real LineLength = 100.0;
-set: real LineWeight = 100.0;
-set: real Xacc = 1.e-3;
+set: real LineLength = 100.0;    
+set: real LineWeight = 100.0;    
+set: real Xacc = 1.e-3;     
 set: real MooringEA = 1.0e4;
 set: real MooringCA = 1.0e1;
 set: real Gravity = 9.80665;
@@ -15,7 +16,7 @@ set: real YAP1 = 0.0;
 set: real ZAP1 = -50.0;
 set: real XFP1 = 5.2;
 set: real YFP1 = 0.0;
-set: real ZFP1 = -10.0; 
+set: real ZFP1 = -10.0;    
 
 begin: data;
     problem: initial value;
@@ -27,15 +28,15 @@ begin: initial value;
     time step: TimeStep;
     
     tolerance: 1.e-2;
-    max iterations: 50;    
-    method: ms, 0.95;    
+    max iterations: 50;      
+    method: ms, 0.95;         
     linear solver: umfpack, cc;
     
     derivatives coefficient: 1.e-4; 
-    derivatives tolerance: 1.e-1; 
-    derivatives max iterations: 50;
+    derivatives tolerance: 1.e-1;   
+    derivatives max iterations: 50;  
     
-    nonlinear solver: newton raphson, modified, 20; 
+    nonlinear solver: newton raphson, modified, 20;
 end: initial value;
 
 begin: control data;
@@ -55,7 +56,7 @@ end: nodes;
 
 begin: elements;
     gravity: uniform, 0., 0., -1., 
-        const, 0.0;         
+        ramp, 0.0, 0.05, 0.0, Gravity;
     
     body: 1000, 1000,
         1000.0,
@@ -71,5 +72,5 @@ begin: elements;
         EA, MooringEA,
         CA, MooringCA,
         gravity, Gravity,
-        force scale factor, const, 0.0; 
+        force scale factor, ramp, 0.0, 0.05, 0.0, 1.0;
 end: elements;
