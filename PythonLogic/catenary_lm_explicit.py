@@ -26,7 +26,7 @@ L_APFP = math.sqrt((FP_COORDS["x"] - AP_COORDS["x"])**2 +
                    (FP_COORDS["y"] - AP_COORDS["y"])**2)
 
 # 振動の設定
-AMP_FL = 1.0 
+AMP_FL = 4.0 
 PERIOD_FL = 20.0 
 OMEGA_FL = 2.0*math.pi / PERIOD_FL
 
@@ -36,18 +36,16 @@ l_param = L_TOTAL / h_span
 _current_p0_for_funcd = 0.0
 
 # ----- ランプ関数 -----
-
-RAMP_T = 10.0
+RAMP_T = 30.0  # 10.0 → 30.0
 def grav_scale(time):
     if time <= 0.0:
         return 0.0
     if time >= RAMP_T:
         return 1.0
     fsf = time / RAMP_T
-    return 3.0*fsf*fsf - 2.0*fsf*fsf*fsf
+    # より滑らかなランプ関数
+    return fsf * fsf * (3.0 - 2.0 * fsf)
 # -----------------------
-
-
 
 def _solve_for_p0_in_funcd(x_candidate, l_val, xacc_p0):
     p0 = 0.0
@@ -89,7 +87,6 @@ def _solve_for_p0_in_funcd(x_candidate, l_val, xacc_p0):
             break
             
     return p0
-
 
 def _funcd_equations(x_val, d_val, l_val, xacc_for_p0_solver):
     global _current_p0_for_funcd 
@@ -152,7 +149,6 @@ def _funcd_equations(x_val, d_val, l_val, xacc_for_p0_solver):
     
     _current_p0_for_funcd = p0_local
     return f_res, df_res, p0_local
-
 
 def _rtsafe_solver(x1_rt, x2_rt, xacc_rt, d_rt, l_rt, xacc_p0_rt):
     p0_for_root = 0.0 
@@ -339,8 +335,48 @@ else:
     
     # ========= カテナリー理論による初期形状ここまで ==============
 
-EA_GLOBAL = 5.0e8
-CA_GLOBAL = 2.0e5
+# ---- 材料特性の定義：段階的変化 --------------------------------
+EA_STEEL = 5.0e8
+CA_STEEL = 2.0e5
+
+# 剛性差を小さくすると安定性向上
+EA_POLYESTER = 1.0e8
+CA_POLYESTER = 1.0e5
+POLYESTER_MASS_PER_LENGTH = 45.0  # [kg/m]
+
+POLYESTER_START_NODE = 5
+POLYESTER_END_NODE = 10
+TRANSITION_SEGMENTS = 2  # 遷移セグメント数
+
+def get_material_properties(segment_index):
+    
+    if segment_index < POLYESTER_START_NODE - TRANSITION_SEGMENTS:
+        # 完全なスチール
+        return EA_STEEL, CA_STEEL, RHO_LINE, "Steel"
+    
+    elif segment_index < POLYESTER_START_NODE:
+        # スチール→ポリエステル遷移
+        ratio = (segment_index - (POLYESTER_START_NODE - TRANSITION_SEGMENTS)) / TRANSITION_SEGMENTS
+        ea = EA_STEEL * (1 - ratio) + EA_POLYESTER * ratio
+        ca = CA_STEEL * (1 - ratio) + CA_POLYESTER * ratio
+        mass = RHO_LINE * (1 - ratio) + POLYESTER_MASS_PER_LENGTH * ratio
+        return ea, ca, mass, "Transition_SP"
+    
+    elif segment_index < POLYESTER_END_NODE:
+        # 完全なポリエステル
+        return EA_POLYESTER, CA_POLYESTER, POLYESTER_MASS_PER_LENGTH, "Polyester"
+    
+    elif segment_index < POLYESTER_END_NODE + TRANSITION_SEGMENTS:
+        # ポリエステル→スチール遷移
+        ratio = (segment_index - POLYESTER_END_NODE) / TRANSITION_SEGMENTS
+        ea = EA_POLYESTER * (1 - ratio) + EA_STEEL * ratio
+        ca = CA_POLYESTER * (1 - ratio) + CA_STEEL * ratio
+        mass = POLYESTER_MASS_PER_LENGTH * (1 - ratio) + RHO_LINE * ratio
+        return ea, ca, mass, "Transition_PS"
+    
+    else:
+        # 完全なスチール
+        return EA_STEEL, CA_STEEL, RHO_LINE, "Steel"
 
 LineDiameter = 0.09017 # [m]
 LineMass = 77.71 # [kg/m]
@@ -349,7 +385,10 @@ RHO_LINE = (LineMass - WaterRho*0.25*math.pi*LineDiameter**2) # [kg/m]
 g = 9.80665
 
 # 海底反力と摩擦力
-SEABED_Z = AP_COORDS["z"]
+SEABED_BASE_Z = AP_COORDS["z"]
+SEABED_AMPLITUDE = 10.0
+SEABED_WAVELENGTH = 200.0
+
 K_SEABED = 1.0e7
 C_SEABED = 1.0e4
 
@@ -357,10 +396,14 @@ MU_STATIC = 0.6 # 静止摩擦係数
 MU_DYNAMIC = 0.5 # 動摩擦係数
 V_SLIP_TOL = 1.0e-3 # 滑り判定速度
 
-DT = 0.01
+# 時間積分パラメータ
+DT = 0.005  # 0.01から0.005に減少
 T_END  = 500.0
 
-# ---- ノードとセグメントの生成 ------------------------------------------
+RAYLEIGH_ALPHA = 0.05  # 質量比例減衰
+RAYLEIGH_BETA = 0.001  # 剛性比例減衰
+
+# ---- ノードとセグメントの生成 ---------------------------
 nodes_xyz0 = [FP_COORDS] + internal_nodes_coords_final + [AP_COORDS]  # 21
 num_nodes = len(nodes_xyz0) # 21
 num_segs  = num_nodes - 1 # 20
@@ -370,14 +413,20 @@ for k in range(num_segs):
     xi, xj = nodes_xyz0[k], nodes_xyz0[k+1]
     L0 = math.dist((xi['x'], xi['y'], xi['z']),
                    (xj['x'], xj['y'], xj['z']))
+    
+    ea_val, ca_val, mass_per_length, material_type = get_material_properties(k)
+
     segments.append({
         "i": k,
         "j": k+1,
         "L0": L0,
-        "EA": EA_GLOBAL,
-        "CA": CA_GLOBAL,
-        "mass": RHO_LINE*L0
+        "EA": ea_val,
+        "CA": ca_val,
+        "mass": mass_per_length * L0,
+        "material": material_type
     })
+    
+    print(f"セグメント {k}-{k+1}: {material_type}, EA={ea_val:.2e}, CA={ca_val:.2e}")
 
 # ---- 各ノードに質量を半分ずつ配分 --------------------------------------
 m_node = [0.0]*num_nodes
@@ -394,10 +443,10 @@ for idx, coord in enumerate(nodes_xyz0):
         "mass": m_node[idx]
     })
 
-# ---- 軸方向ばね･ダンパ力 ------------------------------------------------
+# ---- 軸方向ばね･ダンパ ---------------------------------------
 def axial_forces(nodes, segments):
-    
     f_node = [np.zeros(3) for _ in nodes]
+    MAX_FORCE = 5.0e7  # 最大軸力制限 [N]
 
     for seg in segments:
         i, j   = seg["i"], seg["j"]
@@ -410,30 +459,50 @@ def axial_forces(nodes, segments):
             continue
         t = dx / l # 単位ベクトル
 
-        Fel = seg["EA"] * (l - seg["L0"]) / seg["L0"]
+        strain = (l - seg["L0"]) / seg["L0"]
+        
+        # 材料に応じた軸力計算
+        if "Polyester" in seg.get("material", ""):
+            # ポリエステルロープの非線形特性
+            if strain < 0.01:  # 1%未満のひずみ
+                Fel = seg["EA"] * 0.1 * strain / 0.01  # 非常に低剛性
+            elif strain < 0.05:  # 1%〜5%のひずみ
+                Fel = seg["EA"] * (0.1 + 0.4 * (strain - 0.01) / 0.04)
+            else:  # 5%以上のひずみ
+                Fel = seg["EA"] * (0.5 + 0.5 * min((strain - 0.05) / 0.05, 1.0))
+            Fel = Fel * seg["L0"]
+        else:
+            # スチールケーブルの線形特性
+            Fel = seg["EA"] * strain
+
         vrel = np.dot(vj - vi, t)
         Fd = seg["CA"] * vrel
+
+        # 総軸力（制限付き）
         Fax = Fel + Fd
-        if Fax < 0.0:
-            Fax = 0.0 # 圧縮不可（張力のみ）
+        Fax = max(0.0, min(Fax, MAX_FORCE))  # 0〜MAX_FORCEに制限
 
         Fvec = Fax * t
         f_node[i] +=  Fvec
         f_node[j] += -Fvec
     return f_node
 
-# ---- 海底反力と摩擦力 ---------------
+# ---- 海底面の高さを計算 ------------------------------------------------
+def get_seabed_z(x_coord):
+    return SEABED_BASE_Z + SEABED_AMPLITUDE * math.sin(2 * math.pi * x_coord / SEABED_WAVELENGTH)
 
+# ---- 海底反力と摩擦力 --------------------------------------------------
 def seabed_contact_forces(nodes):
-
     f_node = [np.zeros(3) for _ in nodes]
 
     for k, nd in enumerate(nodes):
-        z = nd["pos"][2]
+        x, z = nd["pos"][0], nd["pos"][2]
         vz = nd["vel"][2]
 
+        seabed_z_local = get_seabed_z(x)
+
         # ----- 反力 ------
-        pen = SEABED_Z - z
+        pen = seabed_z_local - z
         if pen <= 0.0:
             continue
 
@@ -447,18 +516,17 @@ def seabed_contact_forces(nodes):
         v_norm = np.linalg.norm(v_xy)
 
         if v_norm < V_SLIP_TOL:
-            f_fric_cap = MU_STATIC * Fz_norm # 一応出したが，海底に斜面がないと意味ないかも
-            F_fric = - v_xy * 0.0
+            F_fric = np.zeros(2)
         else:
-            F_fric = - MU_DYNAMIC * Fz_norm * (v_xy / v_norm)
+            F_fric_2d = - MU_DYNAMIC * Fz_norm * (v_xy[:2] / v_norm)
+            F_fric = np.concatenate([F_fric_2d, [0.0]])
 
         f_node[k][2] += Fz_norm
-        f_node[k] += F_fric
+        f_node[k][:2] += F_fric[:2]
     
     return f_node
 
-
-# ---- 加速度計算 --------------------------------------------------------
+# ---- 加速度計算（レーリー減衰付き） ------------------------------------
 def compute_acc(nodes, segments, time):
     f_axial = axial_forces(nodes, segments)
     f_seabed = seabed_contact_forces(nodes)
@@ -466,13 +534,18 @@ def compute_acc(nodes, segments, time):
 
     acc = []
     for k, node in enumerate(nodes):
-    
         if node["mass"] == 0.0:
             acc.append(np.zeros(3))
             continue
 
+        # 重力
         Fg = np.array([0.0, 0.0, -node["mass"]*g*scale])
-        F_tot = f_axial[k] + f_seabed[k] + Fg # 合力
+        
+        # レーリー減衰力（数値安定性向上）
+        F_rayleigh = -RAYLEIGH_ALPHA * node["mass"] * node["vel"]
+        
+        # 合力
+        F_tot = f_axial[k] + f_seabed[k] + Fg + F_rayleigh
 
         acc.append(F_tot / node["mass"])
     return acc
@@ -488,6 +561,9 @@ traj_out = []
 
 nodes[0]["mass"] = 0.0
 
+step_count = 0
+output_interval = int(0.1 / DT)  # 0.1秒ごとに出力
+
 while t <= T_END:
     
     x_fl  = FP_COORDS['x'] + AMP_FL * math.sin(OMEGA_FL * t)
@@ -497,24 +573,92 @@ while t <= T_END:
 
     a_list = compute_acc(nodes, segments, t)
 
+    # 速度制限（安定性向上）
+    MAX_VELOCITY = 20.0  # [m/s]
+    
     for k in range(1, num_nodes - 1):
+        # 速度更新
         nodes[k]["vel"] += a_list[k]*DT
+        
+        # 速度制限適用
+        vel_mag = np.linalg.norm(nodes[k]["vel"])
+        if vel_mag > MAX_VELOCITY:
+            nodes[k]["vel"] = nodes[k]["vel"] * (MAX_VELOCITY / vel_mag)
+        
+        # 位置更新
         nodes[k]["pos"] += nodes[k]["vel"]*DT
 
-    for idx in OUTPUT_NODES:
-        p = nodes[idx]["pos"]
-        node_traj[idx].append([t, p[0], p[1], p[2]])
+    # データ記録（間引き出力で効率化）
+    if step_count % output_interval == 0:
+        for idx in OUTPUT_NODES:
+            p = nodes[idx]["pos"]
+            node_traj[idx].append([t, p[0], p[1], p[2]])
     
     t += DT
+    step_count += 1
+    
+    # 進捗表示
+    if step_count % (10 * output_interval) == 0:
+        print(f"Time: {t:.1f}s / {T_END}s ({t/T_END*100:.1f}%)")
 
 print("--- simulation finished ---")
 
-# ---- CSV ファイル書き出し ------------------------------------------------
+# ---- セグメント材料情報をCSVで出力 ------------------------------------
+segment_info = []
+for k, seg in enumerate(segments):
+    segment_info.append([
+        k, # セグメント番号
+        seg["i"], # 開始ノード
+        seg["j"], # 終了ノード
+        seg["material"], # 材料種類
+        seg["EA"], # 軸剛性
+        seg["CA"], # 減衰係数
+        seg["L0"] # 初期長さ
+    ])
 
+with open("segment_materials.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["segment_id", "node_i", "node_j", "material", "EA[N]", "CA[Ns/m]", "L0[m]"])
+    writer.writerows(segment_info)
+
+print("セグメント材料情報 → segment_materials.csv")
+
+# ---- 海底形状データの出力 --------------------------------------------
+print("--- Outputting seabed profile ---")
+
+# x座標の範囲を決定（FPからAPまで + 余裕）
+x_min = min(FP_COORDS["x"], AP_COORDS["x"]) - 100.0
+x_max = max(FP_COORDS["x"], AP_COORDS["x"]) + 100.0
+x_seabed = np.linspace(x_min, x_max, 200)  # 200点でサンプリング
+
+seabed_profile = []
+for x in x_seabed:
+    z_seabed = get_seabed_z(x)
+    seabed_profile.append([x, 0.0, z_seabed])  # [x, y, z]
+
+# CSV出力
+with open("seabed_profile.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["x[m]", "y[m]", "z[m]"])
+    writer.writerows(seabed_profile)
+
+print("海底形状 → seabed_profile.csv")
+
+# ---- CSV ファイル書き出し ------------------------------------------------
 for idx, rows in node_traj.items():
     fname = f"node_{idx}_traj.csv"
     with open(fname, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["time[s]", "x[m]", "y[m]", "z[m]"])
         writer.writerows(rows)
-    print(f"内部ノード {idx} → {fname}")
+    print(f"ノード {idx} → {fname}")
+
+print("\n=== シミュレーション完了 ===")
+print(f"総計算時間: {T_END}s")
+print(f"時間刻み: {DT}s")
+print(f"総ステップ数: {step_count}")
+print(f"ポリエステル部分: ノード{POLYESTER_START_NODE}〜{POLYESTER_END_NODE}")
+print("出力ファイル:")
+print("  - node_XX_traj.csv: 各ノードの軌跡")
+print("  - segment_materials.csv: セグメント材料情報")
+print("  - seabed_profile.csv: 海底形状")
