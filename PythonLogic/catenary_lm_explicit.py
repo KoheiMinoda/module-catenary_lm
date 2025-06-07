@@ -26,7 +26,7 @@ L_APFP = math.sqrt((FP_COORDS["x"] - AP_COORDS["x"])**2 +
                    (FP_COORDS["y"] - AP_COORDS["y"])**2)
 
 # 振動の設定
-AMP_FL = 4.0 
+AMP_FL = 2.0 
 PERIOD_FL = 20.0 
 OMEGA_FL = 2.0*math.pi / PERIOD_FL
 
