@@ -11,7 +11,7 @@ module load: "/usr/local/mbdyn/libexec/libmodule-aerodyn13_b1.09.la";
 #----------------------- variable---------------------------------------
 
 set : real InitialTime		= 0.0;
-set : real FinalTime		= 500.0;
+set : real FinalTime		= 50.0;
 set : real TimeStep		= 0.001;
 set : real outputTimeStep	= 0.1;
 
@@ -94,13 +94,18 @@ set : real LineWeight		= (LineMass-Rho*0.25*pi*LineDiameter^2)*Gravity; # N/m
 set : real Xacc			= 1.e-4;
 
 # ========== 追加 ===========
-set: real MooringEA = 5.0e8;
-set: real MooringCA = 5.0e5;
+# set: real MooringEA = 5.0e8;
+# set: real MooringCA = 5.0e5;
 # set : real MooringEA = 7.536e9; # 参考
 # set : real MooringCA = 7.536e7;
+set : real MooringEA = 5.0e2;
+set : real MooringCA = 5.0e-1;
+
 set : real MooringSeabedZ = - 320.0;
-set : real MooringSeabedK = 5.0e6;
-set : real MooringSeabedC = 5.0e4;
+# set : real MooringSeabedK = 5.0e6;
+# set : real MooringSeabedC = 5.0e4;
+set : real MooringSeabedK = 5.0e2;
+set : real MooringSeabedC = 1.0e1;
 
 set : real AnchorRadius		= 853.87; # m
 set : real AnchorDepth		= -320.0; # m
@@ -193,21 +198,21 @@ begin: initial value;
     final time: FinalTime;
     time step: TimeStep;
 
-    tolerance: 1.e-4; # 収束判定
-    max iterations: 100; # 200 回の残差反復で収束しない場合は打ち切り
-    derivatives tolerance: 1.e-5; # ヤコビアン再計算の判定基準
+    tolerance: 1.e-3; # 収束判定
+    max iterations: 100; # 100 回の残差反復で収束しない場合は打ち切り
+    derivatives tolerance: 1.e-4; # ヤコビアン再計算の判定基準
     derivatives max iterations: 100; # 同じ接線を何回使用できるか
 #   derivatives coefficient: 1.e-4;
 
 #   linear solver: naive, colamd, mt, 1; 
     linear solver: umfpack, cc; # 線形化方程式の解法
 
-    nonlinear solver: newton raphson, modified, 3; # 線形行列を 5 ステップごとに更新
+    nonlinear solver: newton raphson, modified, 10; # 線形行列を 10 ステップごとに更新
     threads: assembly, 1;
-    method: ms, .8;
+    method: ms, .9;
 
-    derivatives coefficient: 1.e-8;
-    derivatives tolerance: 1.0;
+    derivatives coefficient: 1.e-6;
+    derivatives tolerance: 10.0;
     derivatives max iterations: 500;
 
 end: initial value;
