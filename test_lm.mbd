@@ -1,0 +1,74 @@
+module load: "/usr/local/mbdyn/libexec/libmodule-catenary_lm";
+
+set: real FinalTime = 1.0;
+set: real TimeStep = 0.0001;
+set: real LineLength = 902.2;    
+set: real LineWeight = 700.0;    
+set: real Xacc = 1.e-3;     
+set: real MooringEA = 1.0e6;
+set: real MooringCA = 1.0e2;
+set: real Gravity = 9.80665;
+
+set: real XAP1 = 853.87;
+set: real YAP1 = 0.0;
+set: real ZAP1 = -200.0;
+set: real XFP1 = 5.2;
+set: real YFP1 = 0.0;
+set: real ZFP1 = -50.0;    
+
+begin: data;
+    problem: initial value;
+end: data;
+
+begin: initial value;
+    initial time: 0.0;
+    final time: FinalTime;
+    time step: TimeStep;
+    
+    tolerance: 1.e-3;
+    max iterations: 100;
+    method: ms, 0.95;         
+    linear solver: umfpack, cc;
+    
+    derivatives coefficient: 1.e-4; 
+    derivatives tolerance: 1.e-2;   
+    derivatives max iterations: 100;  
+    
+    nonlinear solver: newton raphson, modified, 20;
+end: initial value;
+
+begin: control data;
+    structural nodes: +1;
+    rigid bodies: +1;
+    loadable elements: +1;
+    gravity;
+end: control data;
+
+begin: nodes;
+    structural: 1000, dynamic,
+        XFP1, YFP1, ZFP1,
+        eye,
+        null,
+        null;
+end: nodes;
+
+begin: elements;
+    gravity: uniform, 0., 0., -1., 
+        ramp, 0.0, 0.2, 0.0, Gravity;
+    
+    body: 1000, 1000,
+        2000.0,
+        null,
+        diag, 2.0e3, 2.0e3, 2.0e3;
+
+    user defined: 1500, catenary_lm,
+        1000,
+        LineLength,
+        LineWeight,
+        Xacc,
+        XAP1, YAP1, ZAP1,
+        EA, MooringEA,
+        CA, MooringCA,
+        gravity, Gravity,
+        force scale factor, ramp, 0.0, 0.2, 0.0, 1.0;
+end: elements;
