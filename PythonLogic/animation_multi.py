@@ -7,8 +7,10 @@ import math
 
 # 海底面パラメータ（シミュレーションコードと同じ値）
 SEABED_BASE_Z = -320.0
-SEABED_AMPLITUDE = 10.0
+SEABED_AMPLITUDE = 0.0
 SEABED_WAVELENGTH = 200.0
+# SEABED_AMPLITUDE = 10.0
+# SEABED_WAVELENGTH = 200.0
 
 # ポリエステル部分の定義（シミュレーションコードと同じ値）
 POLYESTER_START_NODE = 5
