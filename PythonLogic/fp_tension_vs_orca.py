@@ -1,3 +1,5 @@
+# シンプルな軸力と海底摩擦
+
 import math
 import numpy as np
 import csv 
@@ -590,7 +592,7 @@ def seabed_contact_forces(nodes, segments, t, other_forces_func=None):
         vz = nd["vel"][2]
 
         seabed_z_local = get_seabed_z(x)
-        pen = seabed_z_local - z
+        pen = seabed_z_local - z + LineDiameter
         
         if pen <= 0.0:
             continue
@@ -1016,3 +1018,4 @@ for idx, rows in node_traj.items():
                         "acceleration_magnitude[m/s2]", "phase", "displacement_from_t20_equilibrium[m]"])
         writer.writerows(rows)
     print(f"[Complete] Node {idx} → {fname}")
+
