@@ -18,7 +18,9 @@ def myacosh(X):
 # ============= Coordinate Definitions =============
 FP_COORDS = {"x": 5.2, "y": 0.0, "z": -70.0}
 AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
+# AP_COORDS = {"x": 200.0, "y": 0.0, "z": -320.0}
 L_NATURAL = 902.2  # [m] Natural length: no stretch
+# L_NATURAL = 320.0
 XACC = 1e-4
 
 MAXIT_P0_SOLVER = 100
@@ -79,12 +81,13 @@ C_SEABED = 0.0
 K_SEABED_NORMAL = 1.0e2    # Normal seabed stiffness [kN/m³]
 K_SEABED_SHEAR = 1.0e2      # Seabed shear stiffness [kN/m³]
 SEABED_DAMPING_RATIO = 0.00
-# MU_STATIC = 0.6
-# MU_DYNAMIC = 0.5
-MU_STATIC = 0.6
-MU_DYNAMIC = 0.4
+MU_STATIC = 0.7
+MU_DYNAMIC = 0.6
+# MU_STATIC = 0.0
+# MU_DYNAMIC = 0.0
 
 # ====== Time Integration Parameters ======
+# DT = 0.001
 DT = 0.001
 T_STATIC = 20.0  # Static equilibrium time
 T_END = 500.0  # Total analysis time
@@ -398,7 +401,7 @@ def reynolds_drag_correction(velocity_magnitude, diameter, kinematic_viscosity, 
     
     cd_corrected = cd_smooth * roughness_factor
     
-    chain_factor = 1.3  # Empirical coefficient
+    chain_factor = 1.61  # Empirical coefficient
     
     return cd_corrected * chain_factor
 
@@ -665,13 +668,14 @@ def seabed_contact_forces(nodes, segments, t, other_forces_func=None):
                 # Transition to kinetic friction
                 if external_force_mag > 1e-9:
                     f_friction_horizontal = -MU_DYNAMIC * Fz_norm * (f_external_horizontal / external_force_mag)
+                    # f_friction_horizontal = MU_DYNAMIC * Fz_norm * (f_external_horizontal / external_force_mag)
                 else:
                     f_friction_horizontal = np.zeros(2)
                 
                 
         else:
-            # Kinetic friction: node is sliding
             f_friction_horizontal = -MU_DYNAMIC * Fz_norm * (v_xy / v_norm)
+            # f_friction_horizontal = MU_DYNAMIC * Fz_norm * (v_xy / v_norm)
 
         # Apply forces
         f_node[k][2] += Fz_norm  # Normal force (vertical)
@@ -732,12 +736,42 @@ def compute_acc(nodes, segments, t):
     
     return acc, tensions
 
+def calculate_resultant_forces(nodes, segments, t):
+    f_node = [np.zeros(3) for _ in nodes]
+    
+    f_axial, tensions = axial_forces(nodes, segments)
+    
+    f_seabed = seabed_contact_forces(nodes, segments, t)
+    
+    f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
+    
+    for k, node in enumerate(nodes):
+        Fg = np.array([0.0, 0.0, -node["mass"]*g])
+        
+        F_total = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
+        f_node[k] = F_total
+    
+    fairleader_force_magnitude = np.linalg.norm(f_node[0])
+    
+    anchor_node_idx = len(nodes) - 1
+    anchor_force_magnitude = np.linalg.norm(f_node[anchor_node_idx])
+    
+    return {
+        'fairleader_force_vector': f_node[0],
+        'fairleader_force_magnitude': fairleader_force_magnitude,
+        'anchor_force_vector': f_node[anchor_node_idx],
+        'anchor_force_magnitude': anchor_force_magnitude,
+        'all_forces': f_node,
+        'tensions': tensions
+    }
+
 # ============= Output Data Setup =============
 OUTPUT_NODES = list(range(num_nodes))
 node_traj = {idx: [] for idx in OUTPUT_NODES}
 tension_data = []
 fluid_force_data = []
 convergence_data = []
+resultant_force_data = []
 
 equilibrium_positions_t20 = None
 
@@ -861,6 +895,19 @@ while t <= T_END:
             u_rel_mag, Re, cd_correction,
             pos_mid[2], fl_displacement, fl_velocity, fl_acceleration,
             np.linalg.norm(acc_mid)
+        ])
+
+        force_results = calculate_resultant_forces(nodes, segments, t)
+
+        fl_force_vec = force_results['fairleader_force_vector']
+        anchor_force_vec = force_results['anchor_force_vector']
+        
+        resultant_force_data.append([
+            t, phase,
+            fl_force_vec[0], fl_force_vec[1], fl_force_vec[2],
+            force_results['fairleader_force_magnitude'],
+            anchor_force_vec[0], anchor_force_vec[1], anchor_force_vec[2],
+            force_results['anchor_force_magnitude']
         ])
     
     t += DT
@@ -1010,6 +1057,42 @@ with open("simulation_settings.csv", "w", newline="") as f:
     writer.writerow(["parameter", "value", "unit", "description"])
     writer.writerows(simulation_settings)
 
+with open("resultant_forces.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([
+        "time[s]", "phase",
+        "fairleader_force_x[N]", "fairleader_force_y[N]", "fairleader_force_z[N]",
+        "fairleader_force_magnitude[N]",
+        "anchor_force_x[N]", "anchor_force_y[N]", "anchor_force_z[N]",
+        "anchor_force_magnitude[N]"
+    ])
+    writer.writerows(resultant_force_data)
+
+if resultant_force_data:
+    fl_forces = [row[5] for row in resultant_force_data] 
+    fl_max = max(fl_forces)
+    fl_min = min(fl_forces)
+    fl_avg = sum(fl_forces) / len(fl_forces)
+    
+    anchor_forces = [row[9] for row in resultant_force_data]  
+    anchor_max = max(anchor_forces)
+    anchor_min = min(anchor_forces)
+    anchor_avg = sum(anchor_forces) / len(anchor_forces)
+    
+    force_statistics = [
+        ["fairleader_force_max", fl_max, "N", "Maximum fairleader resultant force"],
+        ["fairleader_force_min", fl_min, "N", "Minimum fairleader resultant force"],
+        ["fairleader_force_avg", fl_avg, "N", "Average fairleader resultant force"],
+        ["anchor_force_max", anchor_max, "N", "Maximum anchor resultant force"],
+        ["anchor_force_min", anchor_min, "N", "Minimum anchor resultant force"],
+        ["anchor_force_avg", anchor_avg, "N", "Average anchor resultant force"]
+    ]
+    
+    with open("force_statistics.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["parameter", "value", "unit", "description"])
+        writer.writerows(force_statistics)
+
 for idx, rows in node_traj.items():
     fname = f"node_{idx}_traj.csv"
     with open(fname, "w", newline="") as f:
@@ -1018,4 +1101,3 @@ for idx, rows in node_traj.items():
                         "acceleration_magnitude[m/s2]", "phase", "displacement_from_t20_equilibrium[m]"])
         writer.writerows(rows)
     print(f"[Complete] Node {idx} → {fname}")
-
