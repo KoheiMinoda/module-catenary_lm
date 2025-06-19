@@ -45,21 +45,22 @@ LineDryMass = 54.75 # [kg/m]
 WaterRho = 1025.0 # [kg/m³]
 RHO_LINE = 47.5609 # [kg/m]
 g = 9.80665
+CONTACT_DIAMETER = 0.01 # [m]
+STRUCT_DAMP_RATIO = 0.000
 
 # ============= Fluid Force Parameters =============
 RHO_WATER = 1025.0  # Seawater density [kg/m³]
-KINEMATIC_VISCOSITY = 1.05e-6  # Kinematic viscosity [m²/s]
+KINEMATIC_VISCOSITY = 1.35e-6  # Kinematic viscosity [m²/s]
 
 # Mooring line fluid force coefficients: Based on OrcaFlex
-CD_NORMAL_X = 2.6
-CD_NORMAL_Y = 2.6
-CD_NORMAL_Z = 1.4
-CD_TANGENTIAL = 0.01
+CD_NORMAL = 2.6
+CD_AXIAL = 1.4
+CLIFT = 0.0
+DIAM_DRAG_NORMAL = 0.05
+DIAM_DRAG_AXIAL  = 0.01592
 
-CM_NORMAL_X = 1.0
-CM_NORMAL_Y = 1.0
-CM_NORMAL_Z = 0.5
-CM_TANGENTIAL = 0.0
+CM_NORMAL = 1.0
+CM_TANGENTIAL = 0.5 
 
 # Current settings: Linear approximation : No use for vs_OrcaFlex
 CURRENT_SURFACE = 0.5 # Surface current velocity [m/s]
@@ -69,29 +70,33 @@ CURRENT_DIRECTION = 0.0  # Current direction [deg]
 # Wave conditions
 WAVE_HEIGHT = 4.0  # Wave height [m]
 WAVE_PERIOD = 8.0  # Wave period [s]
-WAVE_LENGTH = 99.5  # Wave length [m]
-WAVE_DIRECTION = 180.0  # Wave direction [deg]
+WAVE_LENGTH = (g*WAVE_PERIOD**2) / (2*math.pi)  # Wave length [m]
+WAVE_DIRECTION = 0.0  # Wave direction [deg] Checked
 WATER_DEPTH = 320.0  # Water depth [m]
+P_0 = 101325.0
+
+wave_components = [{
+    'height': WAVE_HEIGHT,
+    'period': WAVE_PERIOD,
+    'phase': 0.0,
+    'direction': WAVE_DIRECTION
+}]
 
 # Seabed definition
 SEABED_BASE_Z = AP_COORDS["z"]
-V_SLIP_TOL = 1.0e-3
-K_SEABED = 1.0e5
-C_SEABED = 0.0
-K_SEABED_NORMAL = 1.0e2    # Normal seabed stiffness [kN/m³]
-K_SEABED_SHEAR = 1.0e2      # Seabed shear stiffness [kN/m³]
-SEABED_DAMPING_RATIO = 0.00
-MU_STATIC = 0.7
-MU_DYNAMIC = 0.6
-# MU_STATIC = 0.0
-# MU_DYNAMIC = 0.0
+K_SEABED_NORMAL = 1.0e5
+MU_LATERAL = 0.0
+MU_AXIAL_STATIC = 0.0
+V_SLIP_TOL_LATERAL = 1.0e-5
+SMOOTH_CLEARANCE = 0.01
+SMOOTH_EPS = 0.01
 
 # ====== Time Integration Parameters ======
-# DT = 0.001
 DT = 0.001
 T_STATIC = 20.0  # Static equilibrium time
 T_END = 500.0  # Total analysis time
-RAYLEIGH_ALPHA = 0.1
+RAYLEIGH_ALPHA = 0.07854  # 質量比例減衰係数 [1/s] (低周波減衰)
+RAYLEIGH_BETA = 0.12732  # 剛性比例減衰係数 [s] (高周波減衰)
 
 # ============= Catenary Calculation Functions =============
 def _solve_for_p0_in_funcd(x_candidate, l_val, xacc_p0):
@@ -304,14 +309,13 @@ def calculate_tension_distribution(catenary_result, rho_line, g):
     
     return tensions
 
-# ============= Pure Catenary Calculation =============
+# ============= カテナリー理論 =============
 
 catenary_result = solve_catenary(FP_COORDS, AP_COORDS, L_NATURAL)
 
 if catenary_result is None:
     raise ValueError("[Error] Pure catenary calculation failed")
 
-# Calculate initial tension distribution
 tension_distribution = calculate_tension_distribution(catenary_result, RHO_LINE, g)
 
 internal_nodes_coords_final = []
@@ -336,8 +340,58 @@ for i_node in range(1, num_internal_nodes + 1):
 
 print(f"[Complete] Number of internal nodes: {len(internal_nodes_coords_final)}")
 
-# ============= Fluid Force Calculation Functions =============
+# ============= ノード，セグメントの設定 =============
+nodes_xyz0 = [FP_COORDS] + internal_nodes_coords_final + [AP_COORDS]
+num_nodes = len(nodes_xyz0)
+num_segs = num_nodes - 1
 
+L_natural_segment = L_NATURAL / num_segs
+
+segments = []
+for k in range(num_segs):
+    xi, xj = nodes_xyz0[k], nodes_xyz0[k+1]
+    L_current = math.dist((xi['x'], xi['y'], xi['z']), (xj['x'], xj['y'], xj['z']))
+    segments.append({
+        "i": k, "j": k+1, 
+        "L0": L_natural_segment,
+        "L_current": L_current,
+        "EA": EA_CHAIN, "CA": CA_CHAIN,
+        "mass": RHO_LINE * L_natural_segment,
+        "material": "Chain"
+    })
+
+print(f"[Complete] Natural segment length: {L_natural_segment:.3f} m")
+print(f"[Complete] Initial state average segment length: {sum([seg['L_current'] for seg in segments])/len(segments):.3f} m")
+
+m_node = [0.0]*num_nodes
+for seg in segments:
+    m_half = 0.5*seg["mass"]
+    m_node[seg["i"]] += m_half
+    m_node[seg["j"]] += m_half
+
+"""
+if len(segments) > 0:
+    # フェアリーダー側
+    m_node[0] += 0.5 * segments[0]["mass"]
+    # アンカー側  
+    m_node[-1] += 0.5 * segments[-1]["mass"]
+"""
+    
+nodes = []
+for idx, coord in enumerate(nodes_xyz0):
+    nodes.append({
+        "pos": np.array([coord['x'], coord['y'], coord['z']], dtype=float),
+        "vel": np.zeros(3),
+        "acc": np.zeros(3),
+        "mass": m_node[idx]
+    })
+
+# =============================================================
+# ============= Fluid Force Calculation Functions =============
+# =============================================================
+
+
+# checked
 def get_current_velocity(z_coord, t):
     depth_ratio = abs(z_coord) / WATER_DEPTH
     depth_ratio = min(1.0, max(0.0, depth_ratio))
@@ -351,6 +405,20 @@ def get_current_velocity(z_coord, t):
     
     return np.array([u_current, v_current, w_current])
 
+# checked
+def solve_dispersion(omega, depth, g=9.80665, tol=1e-6, maxit=50):
+    k = omega**2 / g
+    for _ in range(maxit):
+        tanh_kh = math.tanh(k * depth)
+        f = g * k * tanh_kh - omega**2
+        df = g * tanh_kh + g * k * depth * (1 - tanh_kh**2)
+        dk = -f / df
+        k += dk
+        if abs(dk) < tol:
+            break
+    return k
+
+# checked
 def get_wave_velocity_acceleration(x, z, t):
     k = 2 * math.pi / WAVE_LENGTH
     omega = 2 * math.pi / WAVE_PERIOD
@@ -383,33 +451,51 @@ def get_wave_velocity_acceleration(x, z, t):
     
     return velocity, acceleration
 
-def reynolds_drag_correction(velocity_magnitude, diameter, kinematic_viscosity, surface_roughness=0.001):
-    if velocity_magnitude < 1e-6:
-        return 1.0
-    
-    Re = velocity_magnitude * diameter / kinematic_viscosity
-    
-    if Re < 1e3:
-        cd_smooth = 1.2
-    elif Re <= 2e5:
-        cd_smooth = 1.2 - 0.4 * math.log10(Re / 1e3)
-    else:
-        cd_smooth = 0.3
-    
-    roughness_ratio = surface_roughness / diameter
-    roughness_factor = (1 + roughness_ratio / (1 + roughness_ratio))**0.25
-    
-    cd_corrected = cd_smooth * roughness_factor
-    
-    chain_factor = 1.61  # Empirical coefficient
-    
-    return cd_corrected * chain_factor
+# checked
+def compute_rayleigh_damping_forces(nodes, segments):
+    n_nodes = len(nodes)
+    f_damp = [np.zeros(3) for _ in range(n_nodes)]
 
-def froude_krylov_force(seg_length, diameter, fluid_acceleration):
+    # 質量
+    for k, node in enumerate(nodes):
+        f_damp[k] += - RAYLEIGH_ALPHA * node["mass"] * node["vel"]
+
+    # 剛性
+    for seg in segments:
+        i, j = seg["i"], seg["j"]
+        pos_i, pos_j = nodes[i]["pos"], nodes[j]["pos"]
+        vel_i, vel_j = nodes[i]["vel"], nodes[j]["vel"]
+
+        seg_vec = pos_j - pos_i
+        seg_length = np.linalg.norm(seg_vec)
+        if seg_length < 1e-9:
+            continue
+        t_vec = seg_vec / seg_length
+
+        rel_vel_t = np.dot(vel_j - vel_i, t_vec)
+
+        # 要素剛性 K = EA / L0
+        K_el = seg["EA"] / seg["L0"]
+
+        # 剛性比例減衰力
+        Fd_scalar = RAYLEIGH_BETA * K_el * rel_vel_t
+
+        # ベクトル化してノードに分配
+        Fd_vec = Fd_scalar * t_vec
+        f_damp[i] +=  Fd_vec
+        f_damp[j] += -Fd_vec
+
+    return f_damp
+
+def froude_krylov_force(seg_vector, diameter, fluid_acceleration):
+    seg_length = np.linalg.norm(seg_vector)
+    if seg_length < 1e-12:
+        return np.zeros(3)
     volume = math.pi * (diameter/2)**2 * seg_length
-    F_FK = RHO_WATER * volume * fluid_acceleration
+    F_FK = RHO_WATER * volume * np.asarray(fluid_acceleration, float)
     return F_FK
 
+# checked
 def added_mass_force(seg_vector, seg_length, diameter, structure_acc, fluid_acc, CM_normal, CM_tangential):
     volume = math.pi * (diameter/2)**2 * seg_length
     
@@ -429,341 +515,278 @@ def added_mass_force(seg_vector, seg_length, diameter, structure_acc, fluid_acc,
     
     return F_AM_n + F_AM_t
 
-def drag_force_advanced(seg_vector, seg_length, diameter, relative_velocity, CD_normal, CD_tangential):
-    seg_length_calc = np.linalg.norm(seg_vector)
-    if seg_length_calc < 1e-9:
+# checked
+def drag_force_advanced(seg_vector, seg_length, diam_normal, diam_axial, rel_vel, cd_normal, cd_axial):
+    seg_length = np.linalg.norm(seg_vector)
+    if seg_length < 1e-9:
         return np.zeros(3)
-    t_vec = seg_vector / seg_length_calc
+    t_vec = seg_vector / seg_length
     
-    u_rel_t_scalar = np.dot(relative_velocity, t_vec)
-    u_rel_t = u_rel_t_scalar * t_vec
-    u_rel_n = relative_velocity - u_rel_t
+    vel_t_scalar = np.dot(rel_vel, t_vec)
+    vel_t = vel_t_scalar * t_vec
+    vel_n = rel_vel - vel_t
+    mag_t = abs(vel_t_scalar)
+    mag_n = np.linalg.norm(vel_n)
+
+    area_n = diam_normal * seg_length
+    area_t = math.pi * diam_axial * seg_length
     
-    u_rel_n_mag = np.linalg.norm(u_rel_n)
-    u_rel_t_mag = abs(u_rel_t_scalar)
-    
-    area_normal = diameter * seg_length
-    area_tangential = math.pi * diameter * seg_length  # Tangential direction (surface area)
-    
-    # Drag calculation
-    if u_rel_n_mag > 1e-6:
-        F_drag_n = 0.5 * RHO_WATER * CD_normal * area_normal * u_rel_n_mag * u_rel_n
+    # 法線方向
+    if mag_n > 1e-6:
+        Fd_n = 0.5 * RHO_WATER * cd_normal * area_n * mag_n * vel_n
     else:
-        F_drag_n = np.zeros(3)
+        Fd_n = np.zeros(3)
     
-    if u_rel_t_mag > 1e-6:
-        F_drag_t = 0.5 * RHO_WATER * CD_tangential * area_tangential * u_rel_t_mag * u_rel_t
+    if mag_t > 1e-6:
+        Fd_t = 0.5 * RHO_WATER * cd_axial * area_t * mag_t * vel_t
     else:
-        F_drag_t = np.zeros(3)
+        Fd_t = np.zeros(3)
     
-    return F_drag_n + F_drag_t
+    return Fd_n + Fd_t
 
 def calculate_advanced_morison_forces(nodes, segments, t):
     f_node = [np.zeros(3) for _ in nodes]
     
-    for seg_idx, seg in enumerate(segments):
+    for seg in segments:
         i, j = seg["i"], seg["j"]
+        pos_i, pos_j = nodes[i]["pos"], nodes[j]["pos"]
+        vel_i, vel_j = nodes[i]["vel"], nodes[j]["vel"]
         
         pos_mid = 0.5 * (nodes[i]["pos"] + nodes[j]["pos"])
         vel_mid = 0.5 * (nodes[i]["vel"] + nodes[j]["vel"])
-        
-        if "acc" in nodes[i] and "acc" in nodes[j]:
-            acc_mid = 0.5 * (nodes[i]["acc"] + nodes[j]["acc"])
-        else:
-            acc_mid = np.zeros(3) 
-        
-        x_mid, y_mid, z_mid = pos_mid[0], pos_mid[1], pos_mid[2]
-        
-        seg_vec = nodes[j]["pos"] - nodes[i]["pos"]
+        acc_mid = 0.5 * (nodes[i]["acc"] + nodes[j]["acc"])
+
+        seg_vec = pos_j - pos_i
         seg_length = np.linalg.norm(seg_vec)
         if seg_length < 1e-9:
             continue
         
-        u_current = get_current_velocity(z_mid, t)
-        u_wave, dudt_wave = get_wave_velocity_acceleration(x_mid, z_mid, t)
+        u_curr = get_current_velocity(pos_mid[2], t)
+        u_wave, a_wave = get_wave_velocity_acceleration(pos_mid[0], pos_mid[2], t)
         
-        u_fluid_total = u_wave
-        dudt_fluid_total = dudt_wave
+        u_fluid = u_curr + u_wave
+        a_fluid = a_wave
         
-        u_rel = u_fluid_total - vel_mid
-        dudt_rel = dudt_fluid_total - acc_mid
+        F_FK = froude_krylov_force(seg_vec, LineDiameter, a_fluid)
         
-        F_FK = froude_krylov_force(seg_length, LineDiameter, dudt_fluid_total)
+        F_AM = added_mass_force(
+            seg_vec, 
+            seg_length, 
+            LineDiameter,
+            acc_mid, 
+            a_fluid, 
+            CM_NORMAL,  
+            CM_TANGENTIAL
+        )
         
-        F_AM = added_mass_force(seg_vec, seg_length, LineDiameter,
-                               acc_mid, dudt_fluid_total, 
-                               (CM_NORMAL_X + CM_NORMAL_Y + CM_NORMAL_Z) / 3,  
-                               CM_TANGENTIAL)
-        
-        u_rel_mag = np.linalg.norm(u_rel)
-        cd_correction = reynolds_drag_correction(u_rel_mag, LineDiameter, 
-                                               KINEMATIC_VISCOSITY)
-        
-        cd_avg = (CD_NORMAL_X + CD_NORMAL_Y + CD_NORMAL_Z) / 3
-        
-        F_drag = drag_force_advanced(seg_vec, seg_length, LineDiameter,
-                                   u_rel, cd_avg * cd_correction, 
-                                   CD_TANGENTIAL * cd_correction)
+        u_rel = u_fluid - vel_mid
+        cd_n = CD_NORMAL
+        cd_t = CD_AXIAL
+        F_drag = drag_force_advanced(
+            seg_vec, 
+            seg_length, 
+            DIAM_DRAG_NORMAL,
+            DIAM_DRAG_AXIAL,
+            u_rel, 
+            cd_n, 
+            cd_t
+        )
         
         F_total = F_FK + F_AM + F_drag
-        
         f_node[i] += 0.5 * F_total
         f_node[j] += 0.5 * F_total
     
     return f_node
 
-# ============= Node & Segment Generation (Natural Length Based) =============
-nodes_xyz0 = [FP_COORDS] + internal_nodes_coords_final + [AP_COORDS]
-num_nodes = len(nodes_xyz0)
-num_segs = num_nodes - 1
 
-# Natural length based segment length calculation
-L_natural_segment = L_NATURAL / num_segs
+# ======================================================
+# ============= 軸力 =============
+# ====================================================
 
-segments = []
-for k in range(num_segs):
-    xi, xj = nodes_xyz0[k], nodes_xyz0[k+1]
-    L_current = math.dist((xi['x'], xi['y'], xi['z']), (xj['x'], xj['y'], xj['z']))
-    segments.append({
-        "i": k, "j": k+1, 
-        "L0": L_natural_segment,  # Natural length: strain is calculated based on this
-        "L_current": L_current,   # Current length (length at initial position)
-        "EA": EA_CHAIN, "CA": CA_CHAIN,
-        "mass": RHO_LINE * L_natural_segment,  # Mass based on natural length
-        "material": "Chain"
-    })
 
-print(f"[Complete] Natural segment length: {L_natural_segment:.3f} m")
-print(f"[Complete] Initial state average segment length: {sum([seg['L_current'] for seg in segments])/len(segments):.3f} m")
-
-# Mass distribution (natural length based)
-m_node = [0.0]*num_nodes
-for seg in segments:
-    m_half = 0.5*seg["mass"]
-    m_node[seg["i"]] += m_half
-    m_node[seg["j"]] += m_half
-
-nodes = []
-for idx, coord in enumerate(nodes_xyz0):
-    nodes.append({
-        "pos": np.array([coord['x'], coord['y'], coord['z']], dtype=float),
-        "vel": np.zeros(3),
-        "acc": np.zeros(3),  # Initialize acceleration
-        "mass": m_node[idx]
-    })
-
-# ============= Force Calculation Functions =============
+# checked
 def axial_forces(nodes, segments):
 
     f_node = [np.zeros(3) for _ in nodes]
     tensions = [0.0] * len(segments)
-    MAX_FORCE = 5.0e7
+    MAX_FORCE = 100.0e9
 
     for idx, seg in enumerate(segments):
         i, j = seg["i"], seg["j"]
-        xi, xj = nodes[i]["pos"], nodes[j]["pos"]
-        vi, vj = nodes[i]["vel"], nodes[j]["vel"]
+        pos_i, pos_j = nodes[i]["pos"], nodes[j]["pos"]
+        vel_i, vel_j = nodes[i]["vel"], nodes[j]["vel"]
 
-        dx = xj - xi
-        l_current = np.linalg.norm(dx)
-        if l_current < 1e-9:
+        seg_vec = pos_j - pos_i
+        seg_length = np.linalg.norm(seg_vec)
+        if seg_length < 1e-9:
             continue
-        t = dx / l_current
+        t_vec = seg_vec / seg_length
 
-        # Strain calculation based on natural length L0
-        strain = (l_current - seg["L0"]) / seg["L0"]
+        strain = (seg_length - seg["L0"]) / seg["L0"]
         Fel = seg["EA"] * strain
-        vrel = np.dot(vj - vi, t)
-        Fd = seg["CA"] * vrel
-        Fax = Fel + Fd
-        Fax = max(0.0, min(Fax, MAX_FORCE))
-        tensions[idx] = Fax
+        rel_vel = vel_j - vel_i
+        dl_dt = np.dot(seg_vec, rel_vel) / seg_length
+        strain_rate = dl_dt / seg["L0"]
 
-        Fvec = Fax * t
-        f_node[i] += Fvec
-        f_node[j] += -Fvec
+        if strain > 0:  # 引張のみ
+            F_elastic = seg["EA"] * strain
+        else:
+            F_elastic = 0.0 
+        
+        F_strain_rate_damping = seg["EA"] * STRUCT_DAMP_RATIO * strain_rate
+
+        total_tension = F_elastic + F_strain_rate_damping
+
+        total_tension = max(0.0, min(total_tension, MAX_FORCE))
+        tensions[idx] = total_tension
+
+        tension_vector = total_tension * t_vec
+        f_node[i] += tension_vector
+        f_node[j] += - tension_vector
     return f_node, tensions
+
+
+# =================================
+# ========= 海底接触力 ==============
+# =================================
+
 
 def get_seabed_z(x_coord):
     return SEABED_BASE_Z
 
-def seabed_contact_forces(nodes, segments, t, other_forces_func=None):
+def get_seabed_penetration(node_pos, diameter):
+    x, z = node_pos[0], node_pos[2]
+    seabed_z_local = get_seabed_z(x)
+    penetration = seabed_z_local - z + CONTACT_DIAMETER
+    return max(0.0, penetration)
+
+def is_segment_on_seabed(nodes, seg, diameter):
+    i, j = seg["i"], seg["j"]
+    pen_i = get_seabed_penetration(nodes[i]["pos"], diameter)
+    pen_j = get_seabed_penetration(nodes[j]["pos"], diameter)
+    
+    return pen_i > 0.0 and pen_j > 0.0
+
+def smooth_seabed_force(raw_penetration, K, seg_length, radius, clearance=SMOOTH_CLEARANCE, eps=SMOOTH_EPS):
+    p_eff = raw_penetration + clearance + CONTACT_DIAMETER
+    if p_eff <= 0.0:
+        return 0.0
+    # セグメントあたりの定数化された剛性
+    K_eff = K * seg_length * radius * p_eff
+    # sqrt 関数で p→0 付近の勾配を 0 に近づける
+    return K_eff * (math.sqrt(p_eff**2 + eps**2) - eps)
+
+# checked
+def calculate_segment_seabed_forces(nodes, seg, diameter):
+    i, j = seg["i"], seg["j"]
+    pos_i, pos_j = nodes[i]["pos"], nodes[j]["pos"]
+    vel_i, vel_j = nodes[i]["vel"], nodes[j]["vel"]
+    
+    seg_vec = pos_j - pos_i
+    seg_length = np.linalg.norm(seg_vec)
+    if seg_length < 1e-9:
+        return np.zeros(3), np.zeros(3)
+    radius = diameter / 2.0
+    
+    seabed_z = get_seabed_z(0)
+    raw_i = seabed_z - pos_i[2]
+    raw_j = seabed_z - pos_j[2]
+    raw_avg = 0.5 * (raw_i + raw_j)
+    
+    F_normal = smooth_seabed_force(raw_avg, K_SEABED_NORMAL, seg_length, radius)
+    if F_normal < 0.0:
+        F_normal = 0.0
+    
+    pos_mid = 0.5*(pos_i + pos_j)
+    vel_mid = 0.5*(vel_i + vel_j)
+    vel_lat = vel_mid[:2]
+    mag_lat = np.linalg.norm(vel_lat)
+    if mag_lat > V_SLIP_TOL_LATERAL:
+        F_fric_lat = - MU_LATERAL * F_normal * (vel_lat / mag_lat)
+    else:
+        F_fric_lat = np.zeros(2)
+
+    # ベクトル合成
+    F_norm_vec   = np.array([0.0, 0.0, F_normal])
+    F_fric_vec   = np.array([F_fric_lat[0], F_fric_lat[1], 0.0])
+    F_total      = F_norm_vec + F_fric_vec
+    
+    # セグメント両端に均等配分
+    f_i = 0.5 * F_total
+    f_j = 0.5 * F_total
+    
+    return f_i, f_j
+
+def seabed_contact_forces_segment_based(nodes, segments, t):
     f_node = [np.zeros(3) for _ in nodes]
-
-    for k, nd in enumerate(nodes):
-        x, z = nd["pos"][0], nd["pos"][2]
-        vz = nd["vel"][2]
-
-        seabed_z_local = get_seabed_z(x)
-        pen = seabed_z_local - z + LineDiameter
-        
-        if pen <= 0.0:
-            continue
-
-        Fz_norm = K_SEABED * pen - C_SEABED * vz
-        if Fz_norm < 0.0:
-            Fz_norm = 0.0
-
-        v_xy = nd["vel"][:2].copy()  # X, Y velocity components
-        v_norm = np.linalg.norm(v_xy)
-
-        # Static friction threshold
-        static_friction_limit = MU_STATIC * Fz_norm
-        
-        # Determine if sliding or static
-        if v_norm < V_SLIP_TOL:
-            # Calculate external horizontal forces acting on this node
-            f_external_horizontal = np.zeros(2)
+    
+    for seg in segments:
+        if is_segment_on_seabed(nodes, seg, LineDiameter):
+            f_i, f_j = calculate_segment_seabed_forces(nodes, seg, LineDiameter)
             
-            # Get axial forces from connected segments
-            for seg_idx, seg in enumerate(segments):
-                if seg["i"] == k:  # Node k is start of segment
-                    i, j = seg["i"], seg["j"]
-                    if j < len(nodes):  # Valid node index
-                        xi, xj = nodes[i]["pos"], nodes[j]["pos"]
-                        dx = xj - xi
-                        l_current = np.linalg.norm(dx)
-                        if l_current > 1e-9:
-                            t_vec = dx / l_current
-                            strain = (l_current - seg["L0"]) / seg["L0"]
-                            Fax = max(0.0, seg["EA"] * strain)
-                            f_axial_vec = Fax * t_vec
-                            f_external_horizontal += f_axial_vec[:2]
-                            
-                elif seg["j"] == k:  # Node k is end of segment
-                    i, j = seg["i"], seg["j"]
-                    if i >= 0:  # Valid node index
-                        xi, xj = nodes[i]["pos"], nodes[j]["pos"]
-                        dx = xj - xi
-                        l_current = np.linalg.norm(dx)
-                        if l_current > 1e-9:
-                            t_vec = dx / l_current
-                            strain = (l_current - seg["L0"]) / seg["L0"]
-                            Fax = max(0.0, seg["EA"] * strain)
-                            f_axial_vec = Fax * t_vec
-                            f_external_horizontal -= f_axial_vec[:2]
-            
-            # Add fluid forces (simplified calculation at node position)
-            u_current = get_current_velocity(z, t)
-            u_wave, dudt_wave = get_wave_velocity_acceleration(x, z, t)
-            u_fluid_total = u_current + u_wave
-            u_rel = u_fluid_total[:2] - v_xy
-            u_rel_mag = np.linalg.norm(u_rel)
-            
-            # Simplified drag force estimation for this node
-            if u_rel_mag > 1e-6:
-                # Estimate effective area and drag coefficient for node
-                effective_area = LineDiameter * (L_NATURAL / len(nodes))  # Rough estimation
-                cd_avg = (CD_NORMAL_X + CD_NORMAL_Y) / 2
-                f_drag_horizontal = 0.5 * RHO_WATER * cd_avg * effective_area * u_rel_mag * u_rel
-                f_external_horizontal += f_drag_horizontal
-            
-            # Check if external forces exceed static friction limit
-            external_force_mag = np.linalg.norm(f_external_horizontal)
-            
-            if external_force_mag <= static_friction_limit:
-                # Static friction: friction force balances external force
-                f_friction_horizontal = -f_external_horizontal
-            else:
-                # Transition to kinetic friction
-                if external_force_mag > 1e-9:
-                    f_friction_horizontal = -MU_DYNAMIC * Fz_norm * (f_external_horizontal / external_force_mag)
-                    # f_friction_horizontal = MU_DYNAMIC * Fz_norm * (f_external_horizontal / external_force_mag)
-                else:
-                    f_friction_horizontal = np.zeros(2)
-                
-                
-        else:
-            f_friction_horizontal = -MU_DYNAMIC * Fz_norm * (v_xy / v_norm)
-            # f_friction_horizontal = MU_DYNAMIC * Fz_norm * (v_xy / v_norm)
-
-        # Apply forces
-        f_node[k][2] += Fz_norm  # Normal force (vertical)
-        f_node[k][:2] += f_friction_horizontal  # Friction force (horizontal)
+            f_node[seg["i"]] += f_i
+            f_node[seg["j"]] += f_j
     
     return f_node
 
+# checked
 def calculate_effective_mass(nodes, segments):
 
     effective_masses = []
     
     for k, node in enumerate(nodes):
-        # Structural mass
         m_structure = node["mass"]
-        
-        # Added mass calculation
         m_added = 0.0
         
         for seg in segments:
             if seg["i"] == k or seg["j"] == k:
-                seg_length = seg["L0"]  # Or current length
+                if "L_current" in seg:
+                    seg_length = seg["L_current"]
+                else:
+                    seg_length = seg["L0"]
                 
                 volume = math.pi * (LineDiameter/2)**2 * seg_length
                 
-                CM_avg = (CM_NORMAL_X + CM_NORMAL_Y + CM_NORMAL_Z) / 3
-                m_added_seg = RHO_WATER * volume * CM_avg
-                
+                pos_i = np.array(nodes[seg["i"]]["pos"])
+                pos_j = np.array(nodes[seg["j"]]["pos"])
+                diff = pos_j - pos_i
+                length = np.linalg.norm(diff)
+                if length < 1e-9:
+                    continue
+                t_vec = diff / length
+
+                tz = abs(t_vec[2])
+                CM_eff = CM_TANGENTIAL * tz**2 + CM_NORMAL * (1 - tz**2)
+
+                m_added_seg = RHO_WATER * volume * CM_eff
                 m_added += 0.5 * m_added_seg
         
-        m_effective = m_structure + m_added
-        effective_masses.append(m_effective)
+        effective_masses.append(m_structure + m_added)
     
     return effective_masses
 
+# checked
 def compute_acc(nodes, segments, t):
     effective_masses = calculate_effective_mass(nodes, segments)
 
     f_axial, tensions = axial_forces(nodes, segments)
-    # f_seabed = seabed_contact_forces(nodes)
-    f_seabed = seabed_contact_forces(nodes, segments, t)
-    f_fluid = calculate_advanced_morison_forces(nodes, segments, t)  # Fluid forces
+    f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
+    f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
+    # f_rayleigh = compute_rayleigh_damping_forces(nodes, segments)
 
     acc = []
     for k, node in enumerate(nodes):
-        if node["mass"] == 0.0:
-            acc.append(np.zeros(3))
-            continue
 
         Fg = np.array([0.0, 0.0, -node["mass"]*g])
-        F_rayleigh = np.zeros(3)
+        # F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + f_rayleigh[k] + Fg
+        F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
 
-        F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg + F_rayleigh
-
-        acc_calc = F_tot / effective_masses[k]
-        acc.append(acc_calc)
-        
-        node["acc"] = acc_calc.copy()
+        m_eff = effective_masses[k]
+        a_k = F_tot / m_eff
+        node["acc"] = a_k.copy()
+        acc.append(a_k)
     
     return acc, tensions
-
-def calculate_resultant_forces(nodes, segments, t):
-    f_node = [np.zeros(3) for _ in nodes]
-    
-    f_axial, tensions = axial_forces(nodes, segments)
-    
-    f_seabed = seabed_contact_forces(nodes, segments, t)
-    
-    f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
-    
-    for k, node in enumerate(nodes):
-        Fg = np.array([0.0, 0.0, -node["mass"]*g])
-        
-        F_total = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
-        f_node[k] = F_total
-    
-    fairleader_force_magnitude = np.linalg.norm(f_node[0])
-    
-    anchor_node_idx = len(nodes) - 1
-    anchor_force_magnitude = np.linalg.norm(f_node[anchor_node_idx])
-    
-    return {
-        'fairleader_force_vector': f_node[0],
-        'fairleader_force_magnitude': fairleader_force_magnitude,
-        'anchor_force_vector': f_node[anchor_node_idx],
-        'anchor_force_magnitude': anchor_force_magnitude,
-        'all_forces': f_node,
-        'tensions': tensions
-    }
 
 # ============= Output Data Setup =============
 OUTPUT_NODES = list(range(num_nodes))
@@ -771,7 +794,6 @@ node_traj = {idx: [] for idx in OUTPUT_NODES}
 tension_data = []
 fluid_force_data = []
 convergence_data = []
-resultant_force_data = []
 
 equilibrium_positions_t20 = None
 
@@ -833,7 +855,7 @@ while t <= T_END:
         
         a_list, segment_tensions = compute_acc(nodes, segments, t)
 
-    MAX_VELOCITY = 40.0
+    MAX_VELOCITY = 1000.0
     
     for k in range(1, num_nodes - 1):
         nodes[k]["vel"] += a_list[k]*DT
@@ -886,28 +908,14 @@ while t <= T_END:
         
         u_rel_mag = np.linalg.norm(u_fluid_total - vel_mid)
         Re = u_rel_mag * LineDiameter / KINEMATIC_VISCOSITY if u_rel_mag > 1e-6 else 0.0
-        cd_correction = reynolds_drag_correction(u_rel_mag, LineDiameter, KINEMATIC_VISCOSITY)
         
         fluid_force_data.append([
             t, phase,
             u_fluid_total[0], u_fluid_total[1], u_fluid_total[2],
             dudt_wave[0], dudt_wave[1], dudt_wave[2],
-            u_rel_mag, Re, cd_correction,
+            u_rel_mag, Re,
             pos_mid[2], fl_displacement, fl_velocity, fl_acceleration,
             np.linalg.norm(acc_mid)
-        ])
-
-        force_results = calculate_resultant_forces(nodes, segments, t)
-
-        fl_force_vec = force_results['fairleader_force_vector']
-        anchor_force_vec = force_results['anchor_force_vector']
-        
-        resultant_force_data.append([
-            t, phase,
-            fl_force_vec[0], fl_force_vec[1], fl_force_vec[2],
-            force_results['fairleader_force_magnitude'],
-            anchor_force_vec[0], anchor_force_vec[1], anchor_force_vec[2],
-            force_results['anchor_force_magnitude']
         ])
     
     t += DT
@@ -991,29 +999,6 @@ if equilibrium_positions_t20 is not None:
         writer.writerow(["node_id", "x[m]", "y[m]", "z[m]"])
         writer.writerows(equilibrium_data)
 
-# Fluid force parameters record
-with open("fluid_parameters.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["parameter", "value", "unit", "description"])
-    writer.writerows([
-        ["RHO_WATER", RHO_WATER, "kg/m3", "Seawater density"],
-        ["KINEMATIC_VISCOSITY", KINEMATIC_VISCOSITY, "m2/s", "Kinematic viscosity"],
-        ["CD_NORMAL_X", CD_NORMAL_X, "-", "X-direction drag coefficient"],
-        ["CD_NORMAL_Y", CD_NORMAL_Y, "-", "Y-direction drag coefficient"],
-        ["CD_NORMAL_Z", CD_NORMAL_Z, "-", "Z-direction drag coefficient"],
-        ["CD_TANGENTIAL", CD_TANGENTIAL, "-", "Tangential drag coefficient"],
-        ["CM_NORMAL_X", CM_NORMAL_X, "-", "X-direction added mass coefficient"],
-        ["CM_NORMAL_Y", CM_NORMAL_Y, "-", "Y-direction added mass coefficient"],
-        ["CM_NORMAL_Z", CM_NORMAL_Z, "-", "Z-direction added mass coefficient"],
-        ["CM_TANGENTIAL", CM_TANGENTIAL, "-", "Tangential added mass coefficient"],
-        ["WAVE_HEIGHT", WAVE_HEIGHT, "m", "Wave height"],
-        ["WAVE_PERIOD", WAVE_PERIOD, "s", "Wave period"],
-        ["WAVE_LENGTH", WAVE_LENGTH, "m", "Wave length"],
-        ["LineDiameter", LineDiameter, "m", "Mooring line diameter"],
-        ["AMP_FL", AMP_FL, "m", "Forced vibration amplitude"],
-        ["PERIOD_FL", PERIOD_FL, "s", "Forced vibration period"]
-    ])
-
 # Catenary calculation results
 catenary_info = [
     ["L_NATURAL", L_NATURAL, "m", "Natural length"],
@@ -1057,42 +1042,6 @@ with open("simulation_settings.csv", "w", newline="") as f:
     writer.writerow(["parameter", "value", "unit", "description"])
     writer.writerows(simulation_settings)
 
-with open("resultant_forces.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow([
-        "time[s]", "phase",
-        "fairleader_force_x[N]", "fairleader_force_y[N]", "fairleader_force_z[N]",
-        "fairleader_force_magnitude[N]",
-        "anchor_force_x[N]", "anchor_force_y[N]", "anchor_force_z[N]",
-        "anchor_force_magnitude[N]"
-    ])
-    writer.writerows(resultant_force_data)
-
-if resultant_force_data:
-    fl_forces = [row[5] for row in resultant_force_data] 
-    fl_max = max(fl_forces)
-    fl_min = min(fl_forces)
-    fl_avg = sum(fl_forces) / len(fl_forces)
-    
-    anchor_forces = [row[9] for row in resultant_force_data]  
-    anchor_max = max(anchor_forces)
-    anchor_min = min(anchor_forces)
-    anchor_avg = sum(anchor_forces) / len(anchor_forces)
-    
-    force_statistics = [
-        ["fairleader_force_max", fl_max, "N", "Maximum fairleader resultant force"],
-        ["fairleader_force_min", fl_min, "N", "Minimum fairleader resultant force"],
-        ["fairleader_force_avg", fl_avg, "N", "Average fairleader resultant force"],
-        ["anchor_force_max", anchor_max, "N", "Maximum anchor resultant force"],
-        ["anchor_force_min", anchor_min, "N", "Minimum anchor resultant force"],
-        ["anchor_force_avg", anchor_avg, "N", "Average anchor resultant force"]
-    ]
-    
-    with open("force_statistics.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["parameter", "value", "unit", "description"])
-        writer.writerows(force_statistics)
-
 for idx, rows in node_traj.items():
     fname = f"node_{idx}_traj.csv"
     with open(fname, "w", newline="") as f:
@@ -1101,3 +1050,4 @@ for idx, rows in node_traj.items():
                         "acceleration_magnitude[m/s2]", "phase", "displacement_from_t20_equilibrium[m]"])
         writer.writerows(rows)
     print(f"[Complete] Node {idx} → {fname}")
+
