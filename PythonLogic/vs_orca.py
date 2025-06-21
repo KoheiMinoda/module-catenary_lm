@@ -19,7 +19,7 @@ def myacosh(X):
 FP_COORDS = {"x": 5.2, "y": 0.0, "z": -70.0}
 AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
 # AP_COORDS = {"x": 200.0, "y": 0.0, "z": -320.0}
-L_NATURAL = 902.2  # [m] Natural length: no stretch
+L_NATURAL = 902.0  # [m] Natural length: no stretch
 # L_NATURAL = 320.0
 XACC = 1e-4
 
@@ -38,7 +38,7 @@ PERIOD_FL = 20.0
 OMEGA_FL = 2.0*math.pi / PERIOD_FL
 
 # ============= Material Properties =============
-EA_CHAIN = 2.525e8  # Chain axial stiffness [N]
+EA_CHAIN = 2.525e8  # [N]
 CA_CHAIN = 0.0  # Chain damping coefficient
 LineDiameter = 0.0945 # [m]
 LineDryMass = 54.75 # [kg/m]
@@ -47,12 +47,14 @@ RHO_LINE = 47.5609 # [kg/m]
 g = 9.80665
 CONTACT_DIAMETER = 0.01 # [m]
 STRUCT_DAMP_RATIO = 0.000
+POISSON_RATIO = 0.5
+P_ATMOSPHERIC = 101325.0
 
 # ============= Fluid Force Parameters =============
 RHO_WATER = 1025.0  # Seawater density [kg/m³]
 KINEMATIC_VISCOSITY = 1.35e-6  # Kinematic viscosity [m²/s]
 
-# Mooring line fluid force coefficients: Based on OrcaFlex
+# Mooring line fluid force coefficients
 CD_NORMAL = 2.6
 CD_AXIAL = 1.4
 CLIFT = 0.0
@@ -60,7 +62,14 @@ DIAM_DRAG_NORMAL = 0.05
 DIAM_DRAG_AXIAL  = 0.01592
 
 CM_NORMAL = 1.0
-CM_TANGENTIAL = 0.5 
+CM_TANGENTIAL = 0.5
+
+CA_NORMAL_X = 1.0
+CA_NORMAL_Y = 1.0  
+CA_AXIAL_Z = 0.5
+CM_NORMAL_X = 1.0
+CM_NORMAL_Y = 1.0
+CM_AXIAL_Z = 0.5
 
 # Current settings: Linear approximation : No use for vs_OrcaFlex
 CURRENT_SURFACE = 0.5 # Surface current velocity [m/s]
@@ -68,8 +77,8 @@ CURRENT_BOTTOM = 0.1 # Bottom current velocity [m/s]
 CURRENT_DIRECTION = 0.0  # Current direction [deg]
 
 # Wave conditions
-WAVE_HEIGHT = 4.0  # Wave height [m]
-WAVE_PERIOD = 8.0  # Wave period [s]
+WAVE_HEIGHT = 4.0  # [m]
+WAVE_PERIOD = 8.0  # [s]
 WAVE_LENGTH = (g*WAVE_PERIOD**2) / (2*math.pi)  # Wave length [m]
 WAVE_DIRECTION = 0.0  # Wave direction [deg] Checked
 WATER_DEPTH = 320.0  # Water depth [m]
@@ -95,8 +104,148 @@ SMOOTH_EPS = 0.01
 DT = 0.001
 T_STATIC = 20.0  # Static equilibrium time
 T_END = 500.0  # Total analysis time
-RAYLEIGH_ALPHA = 0.07854  # 質量比例減衰係数 [1/s] (低周波減衰)
-RAYLEIGH_BETA = 0.12732  # 剛性比例減衰係数 [s] (高周波減衰)
+RAYLEIGH_ALPHA = 0.07854  # [1/s]
+RAYLEIGH_BETA = 0.12732  # [s]
+
+class DirectionalEffectiveMassCalculator:
+    
+    def __init__(self, ca_coefficients, line_diameter, water_density):
+        self.CA_NORMAL_X = ca_coefficients[0]
+        self.CA_NORMAL_Y = ca_coefficients[1] 
+        self.CA_AXIAL_Z = ca_coefficients[2]
+        self.line_diameter = line_diameter
+        self.water_density = water_density
+    
+    def calculate_local_coordinate_system(self, seg_vector):
+        
+        seg_length = np.linalg.norm(seg_vector)
+        if seg_length < 1e-9:
+            return (np.array([1, 0, 0]), np.array([0, 1, 0]), np.array([0, 0, 1]))
+        
+        t_vec = seg_vector / seg_length
+        
+        if abs(t_vec[2]) > 0.99:
+            n1_vec = np.array([1.0, 0.0, 0.0])
+            n2_vec = np.array([0.0, 1.0, 0.0])
+        else:
+            temp_z = np.array([0.0, 0.0, 1.0])
+            n1_vec = np.cross(t_vec, temp_z)
+            n1_vec = n1_vec / np.linalg.norm(n1_vec)
+            
+            n2_vec = np.cross(t_vec, n1_vec)
+            n2_vec = n2_vec / np.linalg.norm(n2_vec)
+        
+        return t_vec, n1_vec, n2_vec
+    
+    def calculate_segment_added_mass_matrix(self, seg_vector, seg_length):
+        volume = math.pi * (self.line_diameter/2)**2 * seg_length
+        
+        t_vec, n1_vec, n2_vec = self.calculate_local_coordinate_system(seg_vector)
+        
+        m_local = np.diag([
+            self.water_density * volume * self.CA_NORMAL_X,
+            self.water_density * volume * self.CA_NORMAL_Y,
+            self.water_density * volume * self.CA_AXIAL_Z
+        ])
+        
+        R = np.column_stack([n1_vec, n2_vec, t_vec])
+        
+        M_added_global = R @ m_local @ R.T
+        
+        return M_added_global
+    
+    def calculate_nodal_effective_mass_matrix(self, nodes, segments):
+        
+        n_nodes = len(nodes)
+        effective_mass_matrices = []
+        
+        for k in range(n_nodes):
+        
+            m_structure = nodes[k]["mass"]
+            M_structure = np.eye(3) * m_structure
+        
+            M_added_total = np.zeros((3, 3))
+            
+            for seg in segments:
+                if seg["i"] == k or seg["j"] == k:
+            
+                    pos_i = np.array(nodes[seg["i"]]["pos"])
+                    pos_j = np.array(nodes[seg["j"]]["pos"])
+                    seg_vector = pos_j - pos_i
+                    
+                    if "L_current" in seg:
+                        seg_length = seg["L_current"]
+                    else:
+                        seg_length = seg["L0"]
+                    
+                    M_seg_added = self.calculate_segment_added_mass_matrix(seg_vector, seg_length)
+                    
+                    M_added_total += 0.5 * M_seg_added
+            
+            M_effective = M_structure + M_added_total
+            
+            eigenvals = np.linalg.eigvals(M_effective)
+            min_eigenval = np.min(eigenvals)
+            if min_eigenval < 1e-6:
+                M_effective += np.eye(3) * (1e-6 - min_eigenval)
+            
+            effective_mass_matrices.append(M_effective)
+        
+        return effective_mass_matrices
+    
+    def calculate_scalar_effective_masses(self, nodes, segments):
+        
+        mass_matrices = self.calculate_nodal_effective_mass_matrix(nodes, segments)
+        scalar_masses = []
+        
+        for M_matrix in mass_matrices:
+            scalar_mass = np.trace(M_matrix) / 3.0
+            scalar_masses.append(scalar_mass)
+        
+        return scalar_masses
+    
+    def calculate_directional_effective_masses(self, nodes, segments):
+        
+        mass_matrices = self.calculate_nodal_effective_mass_matrix(nodes, segments)
+        directional_masses = []
+        
+        for M_matrix in mass_matrices:
+            mx = M_matrix[0, 0]
+            my = M_matrix[1, 1] 
+            mz = M_matrix[2, 2]
+            directional_masses.append([mx, my, mz])
+        
+        return directional_masses
+
+# ============= マトリックス形式の運動方程式求解 =============
+
+class MatrixBasedDynamicsSolver:
+    
+    def __init__(self, mass_calculator):
+        self.mass_calculator = mass_calculator
+    
+    def compute_acceleration_with_matrix(self, nodes, segments, force_vectors, t):
+        
+        n_nodes = len(nodes)
+        
+        mass_matrices = self.mass_calculator.calculate_nodal_effective_mass_matrix(nodes, segments)
+        
+        accelerations = []
+        
+        for k in range(n_nodes):
+            M_eff = mass_matrices[k]
+            F_total = force_vectors[k]
+            
+            try:
+                acceleration = np.linalg.solve(M_eff, F_total)
+            except np.linalg.LinAlgError:
+                acceleration = np.linalg.pinv(M_eff) @ F_total
+            
+            accelerations.append(acceleration)
+            
+            nodes[k]["acc"] = acceleration.copy()
+        
+        return accelerations
 
 # ============= Catenary Calculation Functions =============
 def _solve_for_p0_in_funcd(x_candidate, l_val, xacc_p0):
@@ -474,46 +623,84 @@ def compute_rayleigh_damping_forces(nodes, segments):
 
         rel_vel_t = np.dot(vel_j - vel_i, t_vec)
 
-        # 要素剛性 K = EA / L0
         K_el = seg["EA"] / seg["L0"]
 
-        # 剛性比例減衰力
         Fd_scalar = RAYLEIGH_BETA * K_el * rel_vel_t
 
-        # ベクトル化してノードに分配
         Fd_vec = Fd_scalar * t_vec
         f_damp[i] +=  Fd_vec
         f_damp[j] += -Fd_vec
 
     return f_damp
 
-def froude_krylov_force(seg_vector, diameter, fluid_acceleration):
+def froude_krylov_force(seg_vector, diameter, fluid_acc):
     seg_length = np.linalg.norm(seg_vector)
     if seg_length < 1e-12:
         return np.zeros(3)
+    
     volume = math.pi * (diameter/2)**2 * seg_length
-    F_FK = RHO_WATER * volume * np.asarray(fluid_acceleration, float)
-    return F_FK
+
+    t_vec = seg_vector / seg_length
+
+    fluid_acc_axial_scalar = np.dot(fluid_acc, t_vec)
+    fluid_acc_axial = fluid_acc_axial_scalar * t_vec
+    fluid_acc_normal = fluid_acc - fluid_acc_axial
+
+    if abs(t_vec[2]) > 0.99:
+        local_x = np.array([1.0, 0.0, 0.0])
+        local_y = np.array([0.0, 1.0, 0.0])
+    else:
+        temp_z = np.array([0.0, 0.0, 1.0])
+        local_y = np.cross(t_vec, temp_z)
+        local_y = local_y / np.linalg.norm(local_y)
+        local_x = np.cross(local_y, t_vec)
+    
+    fluid_acc_normal_x = np.dot(fluid_acc_normal, local_x)
+    fluid_acc_normal_y = np.dot(fluid_acc_normal, local_y)
+
+    F_FK_x = RHO_WATER * volume * CM_NORMAL_X * fluid_acc_normal_x * local_x
+    F_FK_y = RHO_WATER * volume * CM_NORMAL_Y * fluid_acc_normal_y * local_y
+    F_FK_z = RHO_WATER * volume * CM_AXIAL_Z * fluid_acc_axial_scalar * t_vec
+
+    F_FK_total = F_FK_x + F_FK_y + F_FK_z
+
+    return F_FK_total
 
 # checked
-def added_mass_force(seg_vector, seg_length, diameter, structure_acc, fluid_acc, CM_normal, CM_tangential):
+def added_mass_force(seg_vector, seg_length, diameter, structure_acc, fluid_acc):
     volume = math.pi * (diameter/2)**2 * seg_length
     
     seg_length_calc = np.linalg.norm(seg_vector)
     if seg_length_calc < 1e-9:
         return np.zeros(3)
+    
     t_vec = seg_vector / seg_length_calc
     
     acc_rel = structure_acc - fluid_acc
     
-    acc_rel_t_scalar = np.dot(acc_rel, t_vec)
-    acc_rel_t = acc_rel_t_scalar * t_vec
-    acc_rel_n = acc_rel - acc_rel_t
+    acc_rel_axial_scalar = np.dot(acc_rel, t_vec)
+    acc_rel_axial = acc_rel_axial_scalar * t_vec
+    acc_rel_normal = acc_rel - acc_rel_axial
+
+    if abs(t_vec[2]) > 0.99:
+        local_x = np.array([1.0, 0.0, 0.0])
+        local_y = np.array([0.0, 1.0, 0.0])
+    else:
+        temp_z = np.array([0.0, 0.0, 1.0])
+        local_y = np.cross(t_vec, temp_z)
+        local_y = local_y / np.linalg.norm(local_y)
+        local_x = np.cross(local_y, t_vec)
     
-    F_AM_n = -RHO_WATER * volume * CM_normal * acc_rel_n
-    F_AM_t = -RHO_WATER * volume * CM_tangential * acc_rel_t
+    acc_normal_x = np.dot(acc_rel_normal, local_x)
+    acc_normal_y = np.dot(acc_rel_normal, local_y)
     
-    return F_AM_n + F_AM_t
+    F_AM_x = - RHO_WATER * volume * CA_NORMAL_X * acc_normal_x * local_x
+    F_AM_y = - RHO_WATER * volume * CA_NORMAL_Y * acc_normal_y * local_y
+    F_AM_z = - RHO_WATER * volume * CA_AXIAL_Z * acc_rel_axial_scalar * t_vec
+
+    F_AM_total = F_AM_x + F_AM_y + F_AM_z
+    
+    return F_AM_total
 
 # checked
 def drag_force_advanced(seg_vector, seg_length, diam_normal, diam_axial, rel_vel, cd_normal, cd_axial):
@@ -544,6 +731,9 @@ def drag_force_advanced(seg_vector, seg_length, diam_normal, diam_axial, rel_vel
     
     return Fd_n + Fd_t
 
+EXCLUDE_FLUID_FORCE_NODES = [0, -1]
+
+
 def calculate_advanced_morison_forces(nodes, segments, t):
     f_node = [np.zeros(3) for _ in nodes]
     
@@ -552,8 +742,8 @@ def calculate_advanced_morison_forces(nodes, segments, t):
         pos_i, pos_j = nodes[i]["pos"], nodes[j]["pos"]
         vel_i, vel_j = nodes[i]["vel"], nodes[j]["vel"]
         
-        pos_mid = 0.5 * (nodes[i]["pos"] + nodes[j]["pos"])
-        vel_mid = 0.5 * (nodes[i]["vel"] + nodes[j]["vel"])
+        pos_mid = 0.5 * (pos_i + pos_j)
+        vel_mid = 0.5 * (vel_i + vel_j)
         acc_mid = 0.5 * (nodes[i]["acc"] + nodes[j]["acc"])
 
         seg_vec = pos_j - pos_i
@@ -574,27 +764,26 @@ def calculate_advanced_morison_forces(nodes, segments, t):
             seg_length, 
             LineDiameter,
             acc_mid, 
-            a_fluid, 
-            CM_NORMAL,  
-            CM_TANGENTIAL
+            a_fluid
         )
         
         u_rel = u_fluid - vel_mid
-        cd_n = CD_NORMAL
-        cd_t = CD_AXIAL
         F_drag = drag_force_advanced(
             seg_vec, 
             seg_length, 
             DIAM_DRAG_NORMAL,
             DIAM_DRAG_AXIAL,
             u_rel, 
-            cd_n, 
-            cd_t
+            CD_NORMAL, 
+            CD_AXIAL
         )
         
         F_total = F_FK + F_AM + F_drag
-        f_node[i] += 0.5 * F_total
-        f_node[j] += 0.5 * F_total
+        
+        if i not in EXCLUDE_FLUID_FORCE_NODES:
+            f_node[i] += 0.5 * F_total
+        if j not in EXCLUDE_FLUID_FORCE_NODES:
+            f_node[j] += 0.5 * F_total
     
     return f_node
 
@@ -603,6 +792,10 @@ def calculate_advanced_morison_forces(nodes, segments, t):
 # ============= 軸力 =============
 # ====================================================
 
+def calculate_external_pressure(z_coord):
+    """外部圧力（水圧）計算"""
+    depth = abs(min(0.0, z_coord))
+    return P_ATMOSPHERIC + WaterRho * g * depth
 
 # checked
 def axial_forces(nodes, segments):
@@ -615,6 +808,12 @@ def axial_forces(nodes, segments):
         i, j = seg["i"], seg["j"]
         pos_i, pos_j = nodes[i]["pos"], nodes[j]["pos"]
         vel_i, vel_j = nodes[i]["vel"], nodes[j]["vel"]
+
+        mid_z = 0.5 * (pos_i[2] + pos_j[2])
+        Po = calculate_external_pressure(mid_z)
+        Ao = math.pi * (LineDiameter / 2)**2
+        poisson_effect = -2.0 * POISSON_RATIO * Po * Ao
+        pressure_term = Po * Ao
 
         seg_vec = pos_j - pos_i
         seg_length = np.linalg.norm(seg_vec)
@@ -632,10 +831,11 @@ def axial_forces(nodes, segments):
             F_elastic = seg["EA"] * strain
         else:
             F_elastic = 0.0 
+        # F_elastic = seg["EA"] * strain
         
         F_strain_rate_damping = seg["EA"] * STRUCT_DAMP_RATIO * strain_rate
 
-        total_tension = F_elastic + F_strain_rate_damping
+        total_tension = F_elastic + F_strain_rate_damping + poisson_effect
 
         total_tension = max(0.0, min(total_tension, MAX_FORCE))
         tensions[idx] = total_tension
@@ -671,9 +871,7 @@ def smooth_seabed_force(raw_penetration, K, seg_length, radius, clearance=SMOOTH
     p_eff = raw_penetration + clearance + CONTACT_DIAMETER
     if p_eff <= 0.0:
         return 0.0
-    # セグメントあたりの定数化された剛性
     K_eff = K * seg_length * radius * p_eff
-    # sqrt 関数で p→0 付近の勾配を 0 に近づける
     return K_eff * (math.sqrt(p_eff**2 + eps**2) - eps)
 
 # checked
@@ -706,12 +904,10 @@ def calculate_segment_seabed_forces(nodes, seg, diameter):
     else:
         F_fric_lat = np.zeros(2)
 
-    # ベクトル合成
     F_norm_vec   = np.array([0.0, 0.0, F_normal])
     F_fric_vec   = np.array([F_fric_lat[0], F_fric_lat[1], 0.0])
     F_total      = F_norm_vec + F_fric_vec
     
-    # セグメント両端に均等配分
     f_i = 0.5 * F_total
     f_j = 0.5 * F_total
     
@@ -732,59 +928,60 @@ def seabed_contact_forces_segment_based(nodes, segments, t):
 # checked
 def calculate_effective_mass(nodes, segments):
 
-    effective_masses = []
+    ca_coefficients = [CA_NORMAL_X, CA_NORMAL_Y, CA_AXIAL_Z]
     
-    for k, node in enumerate(nodes):
-        m_structure = node["mass"]
-        m_added = 0.0
-        
-        for seg in segments:
-            if seg["i"] == k or seg["j"] == k:
-                if "L_current" in seg:
-                    seg_length = seg["L_current"]
-                else:
-                    seg_length = seg["L0"]
-                
-                volume = math.pi * (LineDiameter/2)**2 * seg_length
-                
-                pos_i = np.array(nodes[seg["i"]]["pos"])
-                pos_j = np.array(nodes[seg["j"]]["pos"])
-                diff = pos_j - pos_i
-                length = np.linalg.norm(diff)
-                if length < 1e-9:
-                    continue
-                t_vec = diff / length
-
-                tz = abs(t_vec[2])
-                CM_eff = CM_TANGENTIAL * tz**2 + CM_NORMAL * (1 - tz**2)
-
-                m_added_seg = RHO_WATER * volume * CM_eff
-                m_added += 0.5 * m_added_seg
-        
-        effective_masses.append(m_structure + m_added)
+    mass_calculator = DirectionalEffectiveMassCalculator(
+        ca_coefficients, LineDiameter, RHO_WATER
+    )
     
-    return effective_masses
+    scalar_masses = mass_calculator.calculate_scalar_effective_masses(nodes, segments)
+    
+    return scalar_masses
 
 # checked
 def compute_acc(nodes, segments, t):
-    effective_masses = calculate_effective_mass(nodes, segments)
+    
+    USE_MATRIX_SOLVER = True 
+    
+    if USE_MATRIX_SOLVER:
+        ca_coefficients = [CA_NORMAL_X, CA_NORMAL_Y, CA_AXIAL_Z]
+        mass_calculator = DirectionalEffectiveMassCalculator(
+            ca_coefficients, LineDiameter, RHO_WATER
+        )
+        matrix_solver = MatrixBasedDynamicsSolver(mass_calculator)
+        
+        f_axial, tensions = axial_forces(nodes, segments)
+        f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
+        f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
+        
+        force_vectors = []
+        for k, node in enumerate(nodes):
+            Fg = np.array([0.0, 0.0, -node["mass"]*g])
+            F_total = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
+            force_vectors.append(F_total)
+        
+        accelerations = matrix_solver.compute_acceleration_with_matrix(
+            nodes, segments, force_vectors, t
+        )
+        
+        return accelerations, tensions
+    
+    else:
+        effective_masses = calculate_effective_mass(nodes, segments)
 
-    f_axial, tensions = axial_forces(nodes, segments)
-    f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
-    f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
-    # f_rayleigh = compute_rayleigh_damping_forces(nodes, segments)
+        f_axial, tensions = axial_forces(nodes, segments)
+        f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
+        f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
 
-    acc = []
-    for k, node in enumerate(nodes):
+        acc = []
+        for k, node in enumerate(nodes):
+            Fg = np.array([0.0, 0.0, -node["mass"]*g])
+            F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
 
-        Fg = np.array([0.0, 0.0, -node["mass"]*g])
-        # F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + f_rayleigh[k] + Fg
-        F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
-
-        m_eff = effective_masses[k]
-        a_k = F_tot / m_eff
-        node["acc"] = a_k.copy()
-        acc.append(a_k)
+            m_eff = effective_masses[k]
+            a_k = F_tot / m_eff
+            node["acc"] = a_k.copy()
+            acc.append(a_k)
     
     return acc, tensions
 
@@ -801,22 +998,16 @@ equilibrium_positions_t20 = None
 print("\n--- Simulation Start ---")
 print(f"Phase 1: Static equilibrium analysis (gravity + advanced fluid forces) (0 - {T_STATIC}s)")
 print(f"Phase 2: Forced vibration analysis (gravity + advanced fluid forces + forced vibration) ({T_STATIC} - {T_END}s)")
-print(f"Analysis conditions:")
-print(f"  - Natural length: {L_NATURAL} m")
-print(f"  - Initial catenary total length: {L_NATURAL:.3f} m (pure catenary theory)")
-print(f"  - Wave height: {WAVE_HEIGHT} m, period: {WAVE_PERIOD} s")
-print(f"  - Forced vibration amplitude: {AMP_FL} m, period: {PERIOD_FL} s")
 
 t = 0.0
 step_count = 0
 output_interval = int(0.1 / DT)
 
-convergence_check_interval = int(1.0 / DT)  # Check every 1 second
-convergence_threshold = 0.01  # Consider converged if displacement velocity is below 0.01m/s
+convergence_check_interval = int(1.0 / DT)
+convergence_threshold = 0.01
 
 while t <= T_END:
     
-    # Phase 1: Static equilibrium (gravity + fluid forces, no forced vibration)
     if t <= T_STATIC:
         phase = 1
         nodes[0]["pos"][:] = [FP_COORDS['x'], FP_COORDS['y'], FP_COORDS['z']]
@@ -825,7 +1016,6 @@ while t <= T_END:
         
         a_list, segment_tensions = compute_acc(nodes, segments, t)
         
-        # Convergence check
         if step_count % convergence_check_interval == 0 and step_count > 0:
             max_vel = 0.0
             for k in range(1, num_nodes - 1):  # Internal nodes only
@@ -836,13 +1026,7 @@ while t <= T_END:
             
             if max_vel < convergence_threshold and t > 10.0:
                 print(f"[Complete] Static equilibrium convergence achieved at t = {t:.1f}s (max velocity: {max_vel:.6f} m/s)")
-        
-        # Save positions at T=20
-        if abs(t - T_STATIC) < DT/2:
-            equilibrium_positions_t20 = [node["pos"].copy() for node in nodes]
-            print(f"[Complete] Equilibrium positions saved at T={T_STATIC}s")
     
-    # Phase 2: Start of dynamic analysis
     else:
         phase = 2
         vibration_time = t - T_STATIC
@@ -932,115 +1116,11 @@ print("[Complete] --- Simulation Complete ---")
 
 # ============= Analysis Results Output =============
 
-segment_info = []
-for k, seg in enumerate(segments):
-    initial_strain = (seg["L_current"] - seg["L0"]) / seg["L0"]
-    segment_info.append([
-        k, seg["i"], seg["j"], seg["material"], 
-        seg["EA"], seg["CA"], 
-        seg["L0"], seg["L_current"], initial_strain
-    ])
-
-with open("segment_materials.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["segment_id", "node_i", "node_j", "material", 
-                     "EA[N]", "CA[Ns/m]", "L0_natural[m]", "L_initial[m]", "initial_strain[-]"])
-    writer.writerows(segment_info)
-
-# Seabed profile data
-x_min = min(FP_COORDS["x"], AP_COORDS["x"]) - 100.0
-x_max = max(FP_COORDS["x"], AP_COORDS["x"]) + 100.0
-x_seabed = np.linspace(x_min, x_max, 200)
-
-seabed_profile = []
-for x in x_seabed:
-    z_seabed = SEABED_BASE_Z
-    seabed_profile.append([x, 0.0, z_seabed])
-
-with open("seabed_profile.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["x[m]", "y[m]", "z[m]"])
-    writer.writerows(seabed_profile)
-
-# Tension data (detailed statistics with phase information)
 with open("tension_data.csv", "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["time[s]", "fairleader_tension[N]", "anchor_tension[N]", 
                      "max_tension[N]", "avg_tension[N]", "min_tension[N]", "phase"])
     writer.writerows(tension_data)
-
-# Fluid force data
-with open("fluid_conditions.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow([
-        "time[s]", "phase", 
-        "fluid_vel_x[m/s]", "fluid_vel_y[m/s]", "fluid_vel_z[m/s]",
-        "fluid_acc_x[m/s2]", "fluid_acc_y[m/s2]", "fluid_acc_z[m/s2]",
-        "relative_velocity_magnitude[m/s]", "reynolds_number[-]", "cd_correction_factor[-]",
-        "depth[m]", "fairleader_displacement[m]", "fairleader_velocity[m/s]", 
-        "fairleader_acceleration[m/s2]", "structure_acceleration_magnitude[m/s2]"
-    ])
-    writer.writerows(fluid_force_data)
-
-# Convergence data with phase information
-with open("convergence_data.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["time[s]", "max_velocity[m/s]", "phase"])
-    writer.writerows(convergence_data)
-
-# Equilibrium positions at T=20 → Initial positions at start of forced vibration
-if equilibrium_positions_t20 is not None:
-    equilibrium_data = []
-    for idx, pos in enumerate(equilibrium_positions_t20):
-        equilibrium_data.append([idx, pos[0], pos[1], pos[2]])
-    
-    with open("equilibrium_positions_t20.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["node_id", "x[m]", "y[m]", "z[m]"])
-        writer.writerows(equilibrium_data)
-
-# Catenary calculation results
-catenary_info = [
-    ["L_NATURAL", L_NATURAL, "m", "Natural length"],
-    ["CATENARY_TOTAL_LENGTH", L_NATURAL, "m", "Total length used in catenary calculation"],
-    ["L_NATURAL_SEGMENT", L_natural_segment, "m", "Natural segment length"],
-    ["INITIAL_AVG_SEGMENT", sum([seg['L_current'] for seg in segments])/len(segments), "m", "Initial average segment length"],
-    ["CATENARY_PARAMETER", catenary_result['catenary_parameter'], "m", "Catenary parameter"],
-    ["T_STATIC", T_STATIC, "s", "Static equilibrium time"],
-    ["T_END", T_END, "s", "Total analysis time"],
-    ["EA_CHAIN", EA_CHAIN, "N", "Axial stiffness"],
-    ["RHO_LINE", RHO_LINE, "kg/m", "Mooring line density"]
-]
-
-with open("catenary_analysis.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["parameter", "value", "unit", "description"])
-    writer.writerows(catenary_info)
-
-# Simulation settings record
-simulation_settings = [
-    ["CATENARY_METHOD", "Pure Catenary Theory", "-", "Method used for initial geometry"],
-    ["STRETCH_CONSIDERATION", "Disabled", "-", "Stretch consideration in initial geometry"],
-    ["FLUID_MODEL", "Advanced Morison Equation", "-", "Fluid force model used"],
-    ["FROUDE_KRYLOV_FORCE", "Enabled", "-", "Froude-Krylov force"],
-    ["ADDED_MASS_SEPARATION", "Enabled", "-", "Added mass force tangential/normal separation"],
-    ["REYNOLDS_CORRECTION", "Enabled", "-", "Reynolds number based drag correction"],
-    ["RELATIVE_MOTION_EFFECTS", "Enabled", "-", "Relative motion effects"],
-    ["PHASE_1_DESCRIPTION", "Static equilibrium with gravity and advanced fluid forces", "-", "Phase 1 content"],
-    ["PHASE_2_DESCRIPTION", "Forced oscillation with gravity and advanced fluid forces", "-", "Phase 2 content"],
-    ["T_STATIC", T_STATIC, "s", "Static equilibrium time"],
-    ["T_VIBRATION_START", T_STATIC, "s", "Forced vibration start time"],
-    ["T_END", T_END, "s", "Total analysis time"],
-    ["DT", DT, "s", "Time step"],
-    ["CONVERGENCE_THRESHOLD", convergence_threshold, "m/s", "Convergence criterion threshold"],
-    ["MAX_VELOCITY", 40.0, "m/s", "Velocity limitation value"],
-    ["RAYLEIGH_ALPHA", RAYLEIGH_ALPHA, "-", "Rayleigh damping coefficient (currently disabled)"]
-]
-
-with open("simulation_settings.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["parameter", "value", "unit", "description"])
-    writer.writerows(simulation_settings)
 
 for idx, rows in node_traj.items():
     fname = f"node_{idx}_traj.csv"
@@ -1050,4 +1130,4 @@ for idx, rows in node_traj.items():
                         "acceleration_magnitude[m/s2]", "phase", "displacement_from_t20_equilibrium[m]"])
         writer.writerows(rows)
     print(f"[Complete] Node {idx} → {fname}")
-
+    
