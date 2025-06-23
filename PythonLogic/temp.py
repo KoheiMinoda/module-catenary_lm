@@ -21,7 +21,7 @@ AP_COORDS = {"x": 250.0, "y": 0.0, "z": -320.0}
 # AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
 # AP_COORDS = {"x": 250.0, "y": 0.0, "z": -320.0}
 # L_NATURAL = 355
-L_NATURAL = 354.9  # [m] Natural length: no stretch
+L_NATURAL = 355  # [m] Natural length: no stretch
 XACC = 1e-4
 
 MAXIT_P0_SOLVER = 100
@@ -57,6 +57,8 @@ RHO_WATER = 1025.0  # Seawater density [kg/m³]
 KINEMATIC_VISCOSITY = 1.35e-6  # Kinematic viscosity [m²/s]
 
 # Mooring line fluid force coefficients
+# CD_NORMAL = 2.6
+# CD_AXIAL = 1.4
 CD_NORMAL = 1.0
 CD_AXIAL = 1.0
 CLIFT = 0.0
@@ -79,7 +81,7 @@ CURRENT_BOTTOM = 0.1 # Bottom current velocity [m/s]
 CURRENT_DIRECTION = 0.0  # Current direction [deg]
 
 # Wave conditions
-WAVE_HEIGHT = 0  # [m]
+WAVE_HEIGHT = 0.0  # [m]
 WAVE_PERIOD = 20.0  # [s]
 WAVE_LENGTH = (g*WAVE_PERIOD**2) / (2*math.pi)  # Wave length [m]
 WAVE_DIRECTION = 0.0  # Wave direction [deg] Checked
@@ -106,16 +108,148 @@ SMOOTH_EPS = 0.01
 DT = 0.001
 T_STATIC = 80.0  # Static equilibrium time
 T_END = 500.0  # Total analysis time
-RAYLEIGH_ALPHA = 0.0  # [1/s]
-RAYLEIGH_BETA = 0.0 # [s]
+RAYLEIGH_ALPHA = 0.03142  # [1/s]
+RAYLEIGH_BETA = 0.31831 # [s]
 
-def ramp_function(t, ramp_duration=10.0):
-    if t <= 0.0:
-        return 0.0
-    elif t >= ramp_duration:
-        return 1.0
-    else:
-        return t / ramp_duration
+class DirectionalEffectiveMassCalculator:
+    
+    def __init__(self, ca_coefficients, line_diameter, water_density):
+        self.CA_NORMAL_X = ca_coefficients[0]
+        self.CA_NORMAL_Y = ca_coefficients[1] 
+        self.CA_AXIAL_Z = ca_coefficients[2]
+        self.line_diameter = line_diameter
+        self.water_density = water_density
+    
+    def calculate_local_coordinate_system(self, seg_vector):
+        
+        seg_length = np.linalg.norm(seg_vector)
+        if seg_length < 1e-9:
+            return (np.array([1, 0, 0]), np.array([0, 1, 0]), np.array([0, 0, 1]))
+        
+        t_vec = seg_vector / seg_length
+        
+        if abs(t_vec[2]) > 0.99:
+            n1_vec = np.array([1.0, 0.0, 0.0])
+            n2_vec = np.array([0.0, 1.0, 0.0])
+        else:
+            temp_z = np.array([0.0, 0.0, 1.0])
+            n1_vec = np.cross(t_vec, temp_z)
+            n1_vec = n1_vec / np.linalg.norm(n1_vec)
+            
+            n2_vec = np.cross(t_vec, n1_vec)
+            n2_vec = n2_vec / np.linalg.norm(n2_vec)
+        
+        return t_vec, n1_vec, n2_vec
+    
+    def calculate_segment_added_mass_matrix(self, seg_vector, seg_length):
+        volume = math.pi * (self.line_diameter/2)**2 * seg_length
+        
+        t_vec, n1_vec, n2_vec = self.calculate_local_coordinate_system(seg_vector)
+        
+        m_local = np.diag([
+            self.water_density * volume * self.CA_NORMAL_X,
+            self.water_density * volume * self.CA_NORMAL_Y,
+            self.water_density * volume * self.CA_AXIAL_Z
+        ])
+        
+        R = np.column_stack([n1_vec, n2_vec, t_vec])
+        
+        M_added_global = R @ m_local @ R.T
+        
+        return M_added_global
+    
+    def calculate_nodal_effective_mass_matrix(self, nodes, segments):
+        
+        n_nodes = len(nodes)
+        effective_mass_matrices = []
+        
+        for k in range(n_nodes):
+        
+            m_structure = nodes[k]["mass"]
+            M_structure = np.eye(3) * m_structure
+        
+            M_added_total = np.zeros((3, 3))
+            
+            for seg in segments:
+                if seg["i"] == k or seg["j"] == k:
+            
+                    pos_i = np.array(nodes[seg["i"]]["pos"])
+                    pos_j = np.array(nodes[seg["j"]]["pos"])
+                    seg_vector = pos_j - pos_i
+                    
+                    if "L_current" in seg:
+                        seg_length = seg["L_current"]
+                    else:
+                        seg_length = seg["L0"]
+                    
+                    M_seg_added = self.calculate_segment_added_mass_matrix(seg_vector, seg_length)
+                    
+                    M_added_total += 0.5 * M_seg_added
+            
+            M_effective = M_structure + M_added_total
+            
+            eigenvals = np.linalg.eigvals(M_effective)
+            min_eigenval = np.min(eigenvals)
+            if min_eigenval < 1e-6:
+                M_effective += np.eye(3) * (1e-6 - min_eigenval)
+            
+            effective_mass_matrices.append(M_effective)
+        
+        return effective_mass_matrices
+    
+    def calculate_scalar_effective_masses(self, nodes, segments):
+        
+        mass_matrices = self.calculate_nodal_effective_mass_matrix(nodes, segments)
+        scalar_masses = []
+        
+        for M_matrix in mass_matrices:
+            scalar_mass = np.trace(M_matrix) / 3.0
+            scalar_masses.append(scalar_mass)
+        
+        return scalar_masses
+    
+    def calculate_directional_effective_masses(self, nodes, segments):
+        
+        mass_matrices = self.calculate_nodal_effective_mass_matrix(nodes, segments)
+        directional_masses = []
+        
+        for M_matrix in mass_matrices:
+            mx = M_matrix[0, 0]
+            my = M_matrix[1, 1] 
+            mz = M_matrix[2, 2]
+            directional_masses.append([mx, my, mz])
+        
+        return directional_masses
+
+# ============= マトリックス形式の運動方程式求解 =============
+
+class MatrixBasedDynamicsSolver:
+    
+    def __init__(self, mass_calculator):
+        self.mass_calculator = mass_calculator
+    
+    def compute_acceleration_with_matrix(self, nodes, segments, force_vectors, t):
+        
+        n_nodes = len(nodes)
+        
+        mass_matrices = self.mass_calculator.calculate_nodal_effective_mass_matrix(nodes, segments)
+        
+        accelerations = []
+        
+        for k in range(n_nodes):
+            M_eff = mass_matrices[k]
+            F_total = force_vectors[k]
+            
+            try:
+                acceleration = np.linalg.solve(M_eff, F_total)
+            except np.linalg.LinAlgError:
+                acceleration = np.linalg.pinv(M_eff) @ F_total
+            
+            accelerations.append(acceleration)
+            
+            nodes[k]["acc"] = acceleration.copy()
+        
+        return accelerations
 
 # ============= Catenary Calculation Functions =============
 def _solve_for_p0_in_funcd(x_candidate, l_val, xacc_p0):
@@ -383,7 +517,6 @@ for k in range(num_segs):
 print(f"[Complete] Natural segment length: {L_natural_segment:.3f} m")
 print(f"[Complete] Initial state average segment length: {sum([seg['L_current'] for seg in segments])/len(segments):.3f} m")
 
-
 m_node = [0.0]*num_nodes
 for seg in segments:
     m_half = 0.5*seg["mass"]
@@ -406,7 +539,6 @@ for idx, coord in enumerate(nodes_xyz0):
         "acc": np.zeros(3),
         "mass": m_node[idx]
     })
-
 
 # =============================================================
 # ============= Fluid Force Calculation Functions =============
@@ -605,9 +737,7 @@ def drag_force_advanced(seg_vector, seg_length, diam_normal, diam_axial, rel_vel
     
     return Fd_n + Fd_t
 
-# EXCLUDE_FLUID_FORCE_NODES = [0]
 EXCLUDE_FLUID_FORCE_NODES = []
-EXCLUDE_SEABED_FORCE_NODES = []
 
 def calculate_advanced_morison_forces(nodes, segments, t):
     f_node = [np.zeros(3) for _ in nodes]
@@ -634,7 +764,13 @@ def calculate_advanced_morison_forces(nodes, segments, t):
         
         F_FK = froude_krylov_force(seg_vec, LineDiameter, a_fluid)
         
-        F_AM = added_mass_force(seg_vec, seg_length, LineDiameter, acc_mid, a_fluid)
+        F_AM = added_mass_force(
+            seg_vec, 
+            seg_length, 
+            LineDiameter,
+            acc_mid, 
+            a_fluid
+        )
         
         u_rel = u_fluid - vel_mid
         F_drag = drag_force_advanced(
@@ -648,7 +784,7 @@ def calculate_advanced_morison_forces(nodes, segments, t):
         )
         
         F_total = F_FK + F_AM + F_drag
-        # F_total = F_FK +  F_drag
+        # F_total = F_FK + F_drag
         
         if i not in EXCLUDE_FLUID_FORCE_NODES:
             f_node[i] += 0.5 * F_total
@@ -681,7 +817,9 @@ def axial_forces(nodes, segments):
 
         mid_z = 0.5 * (pos_i[2] + pos_j[2])
         Po = calculate_external_pressure(mid_z)
-        Ao = 0.25 * math.pi * LineDiameter**2
+        Ao = 0.25 * math.pi * (LineDiameter)**2
+        poisson_effect = -2.0 * POISSON_RATIO * Po * Ao
+        pressure_term = Po * Ao
 
         seg_vec = pos_j - pos_i
         seg_length = np.linalg.norm(seg_vec)
@@ -690,10 +828,6 @@ def axial_forces(nodes, segments):
         t_vec = seg_vec / seg_length
 
         strain = (seg_length - seg["L0"]) / seg["L0"]
-        if strain > 0:
-            poisson_effect = -2.0 * POISSON_RATIO * Po * Ao
-        else:
-            poisson_effect = 0.0
         Fel = seg["EA"] * strain
         rel_vel = vel_j - vel_i
         dl_dt = np.dot(seg_vec, rel_vel) / seg_length
@@ -791,29 +925,68 @@ def seabed_contact_forces_segment_based(nodes, segments, t):
         if is_segment_on_seabed(nodes, seg, LineDiameter):
             f_i, f_j = calculate_segment_seabed_forces(nodes, seg, LineDiameter)
             
-            if seg["i"] not in EXCLUDE_SEABED_FORCE_NODES:
-                f_node[seg["i"]] += f_i
-            if seg["j"] not in EXCLUDE_SEABED_FORCE_NODES:
-                f_node[seg["j"]] += f_j
+            f_node[seg["i"]] += f_i
+            f_node[seg["j"]] += f_j
     
     return f_node
 
 # checked
+def calculate_effective_mass(nodes, segments):
+
+    ca_coefficients = [CA_NORMAL_X, CA_NORMAL_Y, CA_AXIAL_Z]
+    
+    mass_calculator = DirectionalEffectiveMassCalculator(
+        ca_coefficients, LineDiameter, RHO_WATER
+    )
+    
+    scalar_masses = mass_calculator.calculate_scalar_effective_masses(nodes, segments)
+    
+    return scalar_masses
+
+# checked
 def compute_acc(nodes, segments, t):
     
-    f_axial, tensions = axial_forces(nodes, segments)
-    f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
-    f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
+    USE_MATRIX_SOLVER = True 
+    
+    if USE_MATRIX_SOLVER:
+        ca_coefficients = [CA_NORMAL_X, CA_NORMAL_Y, CA_AXIAL_Z]
+        mass_calculator = DirectionalEffectiveMassCalculator(
+            ca_coefficients, LineDiameter, RHO_WATER
+        )
+        matrix_solver = MatrixBasedDynamicsSolver(mass_calculator)
+        
+        f_axial, tensions = axial_forces(nodes, segments)
+        f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
+        f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
+        
+        force_vectors = []
+        for k, node in enumerate(nodes):
+            Fg = np.array([0.0, 0.0, -node["mass"]*g])
+            F_total = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
+            force_vectors.append(F_total)
+        
+        accelerations = matrix_solver.compute_acceleration_with_matrix(
+            nodes, segments, force_vectors, t
+        )
+        
+        return accelerations, tensions
+    
+    else:
+        effective_masses = calculate_effective_mass(nodes, segments)
 
-    acc = []
-    for k, node in enumerate(nodes):
-        Fg = np.array([0.0, 0.0, -node["mass"]*g])
-        F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
+        f_axial, tensions = axial_forces(nodes, segments)
+        f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
+        f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
 
-        m_eff = node["mass"]
-        a_k = F_tot / m_eff
-        node["acc"] = a_k.copy()
-        acc.append(a_k)
+        acc = []
+        for k, node in enumerate(nodes):
+            Fg = np.array([0.0, 0.0, -node["mass"]*g])
+            F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
+
+            m_eff = effective_masses[k]
+            a_k = F_tot / m_eff
+            node["acc"] = a_k.copy()
+            acc.append(a_k)
     
     return acc, tensions
 
