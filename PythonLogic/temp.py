@@ -49,7 +49,7 @@ RHO_LINE = 47.5609 # [kg/m]
 g = 9.80665
 CONTACT_DIAMETER = 0.18 # [m]
 STRUCT_DAMP_RATIO = 0.000
-POISSON_RATIO = 0.5
+POISSON_RATIO = 0.0
 P_ATMOSPHERIC = 101325.0
 
 # ============= Fluid Force Parameters =============
@@ -57,8 +57,10 @@ RHO_WATER = 1025.0  # Seawater density [kg/m³]
 KINEMATIC_VISCOSITY = 1.35e-6  # Kinematic viscosity [m²/s]
 
 # Mooring line fluid force coefficients
-CD_NORMAL = 2.6
-CD_AXIAL = 1.4
+# CD_NORMAL = 2.6
+# CD_AXIAL = 1.4
+CD_NORMAL = 1.0
+CD_AXIAL = 1.0
 CLIFT = 0.0
 DIAM_DRAG_NORMAL = 0.05
 DIAM_DRAG_AXIAL  = 0.01592
@@ -68,10 +70,10 @@ CM_TANGENTIAL = 0.5
 
 CA_NORMAL_X = 1.0
 CA_NORMAL_Y = 1.0  
-CA_AXIAL_Z = 0.5
+CA_AXIAL_Z = 1.0
 CM_NORMAL_X = 1.0
 CM_NORMAL_Y = 1.0
-CM_AXIAL_Z = 0.5
+CM_AXIAL_Z = 1.0
 
 # Current settings: Linear approximation : No use for vs_OrcaFlex
 CURRENT_SURFACE = 0.5 # Surface current velocity [m/s]
@@ -108,16 +110,6 @@ T_STATIC = 80.0  # Static equilibrium time
 T_END = 500.0  # Total analysis time
 RAYLEIGH_ALPHA = 0.03142  # [1/s]
 RAYLEIGH_BETA = 0.31831 # [s]
-
-def ramp_function(t, ramp_duration=10.0):
-    if t <= 0.0:
-        return 0.0
-    elif t >= ramp_duration:
-        return 1.0
-    else:
-        return t / ramp_duration
-
-# =======================================
 
 class DirectionalEffectiveMassCalculator:
     
@@ -525,8 +517,6 @@ for k in range(num_segs):
 print(f"[Complete] Natural segment length: {L_natural_segment:.3f} m")
 print(f"[Complete] Initial state average segment length: {sum([seg['L_current'] for seg in segments])/len(segments):.3f} m")
 
-
-
 m_node = [0.0]*num_nodes
 for seg in segments:
     m_half = 0.5*seg["mass"]
@@ -747,8 +737,7 @@ def drag_force_advanced(seg_vector, seg_length, diam_normal, diam_axial, rel_vel
     
     return Fd_n + Fd_t
 
-EXCLUDE_FLUID_FORCE_NODES = [0]
-EXCLUDE_SEABED_FORCE_NODES = [num_nodes - 1]
+EXCLUDE_FLUID_FORCE_NODES = []
 
 def calculate_advanced_morison_forces(nodes, segments, t):
     f_node = [np.zeros(3) for _ in nodes]
@@ -775,7 +764,15 @@ def calculate_advanced_morison_forces(nodes, segments, t):
         
         F_FK = froude_krylov_force(seg_vec, LineDiameter, a_fluid)
         
-        # F_AM = added_mass_force(seg_vec, seg_length, LineDiameter, acc_mid, a_fluid)
+        """
+        F_AM = added_mass_force(
+            seg_vec, 
+            seg_length, 
+            LineDiameter,
+            acc_mid, 
+            a_fluid
+        )
+        """
         
         u_rel = u_fluid - vel_mid
         F_drag = drag_force_advanced(
@@ -789,7 +786,7 @@ def calculate_advanced_morison_forces(nodes, segments, t):
         )
         
         # F_total = F_FK + F_AM + F_drag
-        F_total = F_FK +  F_drag
+        F_total = F_FK + F_drag
         
         if i not in EXCLUDE_FLUID_FORCE_NODES:
             f_node[i] += 0.5 * F_total
@@ -822,7 +819,9 @@ def axial_forces(nodes, segments):
 
         mid_z = 0.5 * (pos_i[2] + pos_j[2])
         Po = calculate_external_pressure(mid_z)
-        Ao = 0.25 * math.pi * LineDiameter**2
+        Ao = 0.25 * math.pi * (LineDiameter)**2
+        poisson_effect = -2.0 * POISSON_RATIO * Po * Ao
+        pressure_term = Po * Ao
 
         seg_vec = pos_j - pos_i
         seg_length = np.linalg.norm(seg_vec)
@@ -831,10 +830,6 @@ def axial_forces(nodes, segments):
         t_vec = seg_vec / seg_length
 
         strain = (seg_length - seg["L0"]) / seg["L0"]
-        if strain > 0:
-            poisson_effect = -2.0 * POISSON_RATIO * Po * Ao
-        else:
-            poisson_effect = 0.0
         Fel = seg["EA"] * strain
         rel_vel = vel_j - vel_i
         dl_dt = np.dot(seg_vec, rel_vel) / seg_length
@@ -932,10 +927,8 @@ def seabed_contact_forces_segment_based(nodes, segments, t):
         if is_segment_on_seabed(nodes, seg, LineDiameter):
             f_i, f_j = calculate_segment_seabed_forces(nodes, seg, LineDiameter)
             
-            if seg["i"] not in EXCLUDE_SEABED_FORCE_NODES:
-                f_node[seg["i"]] += f_i
-            if seg["j"] not in EXCLUDE_SEABED_FORCE_NODES:
-                f_node[seg["j"]] += f_j
+            f_node[seg["i"]] += f_i
+            f_node[seg["j"]] += f_j
     
     return f_node
 
@@ -956,8 +949,6 @@ def calculate_effective_mass(nodes, segments):
 def compute_acc(nodes, segments, t):
     
     USE_MATRIX_SOLVER = True 
-
-    ramp_factor = ramp_function(t)
     
     if USE_MATRIX_SOLVER:
         ca_coefficients = [CA_NORMAL_X, CA_NORMAL_Y, CA_AXIAL_Z]
@@ -969,12 +960,11 @@ def compute_acc(nodes, segments, t):
         f_axial, tensions = axial_forces(nodes, segments)
         f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
         f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
-        f_damp = compute_rayleigh_damping_forces(nodes, segments)
         
         force_vectors = []
         for k, node in enumerate(nodes):
             Fg = np.array([0.0, 0.0, -node["mass"]*g])
-            F_total = ramp_factor * (f_axial[k] + f_seabed[k] + f_fluid[k] + f_damp[k] + Fg)
+            F_total = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
             force_vectors.append(F_total)
         
         accelerations = matrix_solver.compute_acceleration_with_matrix(
