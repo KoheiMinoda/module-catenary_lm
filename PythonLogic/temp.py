@@ -108,8 +108,8 @@ SMOOTH_EPS = 0.01
 DT = 0.001
 T_STATIC = 80.0  # Static equilibrium time
 T_END = 500.0  # Total analysis time
-RAYLEIGH_ALPHA = 0.03142  # [1/s]
-RAYLEIGH_BETA = 0.31831 # [s]
+RAYLEIGH_ALPHA = 0.0  # [1/s]
+RAYLEIGH_BETA = 0.0 # [s]
 
 class DirectionalEffectiveMassCalculator:
     
@@ -794,6 +794,73 @@ def calculate_advanced_morison_forces(nodes, segments, t):
     return f_node
 
 
+# ============= 行列ソルバー用の力の計算関数 (新規追加) =============
+
+def calculate_rhs_forces_for_matrix_solver(nodes, segments, t, mass_calculator):
+    """
+    行列ソルバー (M_eff * a = F_rhs) のための右辺の力ベクトル F_rhs を計算する。
+    この関数は、構造物加速度aに依存する付加質量力の項 (-m_added * a) を含めず、
+    流体加速度a_fluidに依存する項 (m_added * a_fluid) のみを力として計算する。
+    """
+    n_nodes = len(nodes)
+    
+    # 1. 軸力、海底接触力、減衰力を計算 (既存の関数を流用)
+    f_axial, tensions = axial_forces(nodes, segments)
+    f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
+    f_damping = compute_rayleigh_damping_forces(nodes, segments) # 減衰力も追加
+
+    # 2. 流体関連の力を計算 (F_FK, F_drag, m_added * a_fluid)
+    f_fluid_rhs = [np.zeros(3) for _ in range(n_nodes)]
+    for seg in segments:
+        i, j = seg["i"], seg["j"]
+        pos_i, pos_j = nodes[i]["pos"], nodes[j]["pos"]
+        vel_i, vel_j = nodes[i]["vel"], nodes[j]["vel"]
+        
+        pos_mid = 0.5 * (pos_i + pos_j)
+        vel_mid = 0.5 * (vel_i + vel_j)
+        
+        seg_vec = pos_j - pos_i
+        seg_length = np.linalg.norm(seg_vec)
+        if seg_length < 1e-9:
+            continue
+            
+        # 流体速度と加速度を取得
+        u_curr = get_current_velocity(pos_mid[2], t)
+        u_wave, a_fluid = get_wave_velocity_acceleration(pos_mid[0], pos_mid[2], t)
+        u_fluid = u_curr + u_wave
+
+        # (a) Froude-Krylov力を計算
+        F_FK = froude_krylov_force(seg_vec, LineDiameter, a_fluid)
+        
+        # (b) 抗力を計算
+        u_rel = u_fluid - vel_mid
+        F_drag = drag_force_advanced(
+            seg_vec, seg_length, DIAM_DRAG_NORMAL, DIAM_DRAG_AXIAL,
+            u_rel, CD_NORMAL, CD_AXIAL
+        )
+
+        # (c) m_added * a_fluid 項を計算
+        M_seg_added = mass_calculator.calculate_segment_added_mass_matrix(seg_vec, seg_length)
+        F_am_fluid_part = M_seg_added @ a_fluid
+
+        # (d) セグメントの流体力を合計
+        F_fluid_seg_total = F_FK + F_drag + F_am_fluid_part
+        
+        # ノードに力を配分
+        if i not in EXCLUDE_FLUID_FORCE_NODES:
+            f_fluid_rhs[i] += 0.5 * F_fluid_seg_total
+        if j not in EXCLUDE_FLUID_FORCE_NODES:
+            f_fluid_rhs[j] += 0.5 * F_fluid_seg_total
+
+    # 3. すべての力をノードごとに合計する
+    force_vectors = []
+    for k, node in enumerate(nodes):
+        Fg = np.array([0.0, 0.0, -node["mass"] * g])
+        F_total_rhs = f_axial[k] + f_seabed[k] + f_damping[k] + f_fluid_rhs[k] + Fg
+        force_vectors.append(F_total_rhs)
+        
+    return force_vectors, tensions
+
 # ======================================================
 # ============= 軸力 =============
 # ====================================================
@@ -955,15 +1022,7 @@ def compute_acc(nodes, segments, t):
         )
         matrix_solver = MatrixBasedDynamicsSolver(mass_calculator)
         
-        f_axial, tensions = axial_forces(nodes, segments)
-        f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
-        f_fluid = calculate_advanced_morison_forces(nodes, segments, t)
-        
-        force_vectors = []
-        for k, node in enumerate(nodes):
-            Fg = np.array([0.0, 0.0, -node["mass"]*g])
-            F_total = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
-            force_vectors.append(F_total)
+        force_vectors, tensions = calculate_rhs_forces_for_matrix_solver(nodes, segments, t, mass_calculator)
         
         accelerations = matrix_solver.compute_acceleration_with_matrix(
             nodes, segments, force_vectors, t
