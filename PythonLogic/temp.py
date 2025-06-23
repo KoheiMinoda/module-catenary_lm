@@ -15,13 +15,13 @@ def myacosh(X):
     return math.log(X + math.sqrt(X*X - 1.0))
 
 # ============= Coordinate Definitions =============
-FP_COORDS = {"x": 0.0, "y": 0.0, "z": -70.0}
-AP_COORDS = {"x": 250.0, "y": 0.0, "z": -320.0}
-# FP_COORDS = {"x": 5.2, "y": 0.0, "z": -70.0}
-# AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
+# FP_COORDS = {"x": 0.0, "y": 0.0, "z": -70.0}
+# AP_COORDS = {"x": 250.0, "y": 0.0, "z": -320.0}
+FP_COORDS = {"x": 5.2, "y": 0.0, "z": -70.0}
+AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
 # AP_COORDS = {"x": 250.0, "y": 0.0, "z": -320.0}
 # L_NATURAL = 355
-L_NATURAL = 355  # [m] Natural length: no stretch
+L_NATURAL = 902.2  # [m] Natural length: no stretch
 XACC = 1e-4
 
 MAXIT_P0_SOLVER = 100
@@ -35,7 +35,7 @@ L_APFP = math.sqrt(
 _current_p0_for_funcd = 0.0
 
 # ========= Forced Vibration Settings ===========
-AMP_FL = 2
+AMP_FL = 1
 PERIOD_FL = 20.0 
 OMEGA_FL = 2.0*math.pi / PERIOD_FL
 
@@ -70,9 +70,9 @@ CM_TANGENTIAL = 1.0
 
 CA_NORMAL_X = 1.0
 CA_NORMAL_Y = 1.0  
-CA_AXIAL_Z = 1.0
-CM_NORMAL_X = 1.0
-CM_NORMAL_Y = 1.0
+CA_AXIAL_Z = 0.5
+CM_NORMAL_X = 2.0
+CM_NORMAL_Y = 2.0
 CM_AXIAL_Z = 1.0
 
 # Current settings: Linear approximation : No use for vs_OrcaFlex
@@ -81,7 +81,7 @@ CURRENT_BOTTOM = 0.1 # Bottom current velocity [m/s]
 CURRENT_DIRECTION = 0.0  # Current direction [deg]
 
 # Wave conditions
-WAVE_HEIGHT = 0.0  # [m]
+WAVE_HEIGHT = 4.0  # [m]
 WAVE_PERIOD = 20.0  # [s]
 WAVE_LENGTH = (g*WAVE_PERIOD**2) / (2*math.pi)  # Wave length [m]
 WAVE_DIRECTION = 0.0  # Wave direction [deg] Checked
