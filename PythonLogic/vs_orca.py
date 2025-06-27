@@ -1,4 +1,3 @@
-# シンプルな軸力と海底摩擦
 
 import math
 import numpy as np
@@ -16,24 +15,27 @@ def myacosh(X):
     return math.log(X + math.sqrt(X*X - 1.0))
 
 # ============= Coordinate Definitions =============
+# FP_COORDS = {"x": 0.0, "y": 0.0, "z": -70.0}
+# AP_COORDS = {"x": 250.0, "y": 0.0, "z": -320.0}
 FP_COORDS = {"x": 5.2, "y": 0.0, "z": -70.0}
-AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
-# AP_COORDS = {"x": 200.0, "y": 0.0, "z": -320.0}
-L_NATURAL = 902.0  # [m] Natural length: no stretch
-# L_NATURAL = 320.0
+# AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
+AP_COORDS = {"x": 255.2, "y": 0.0, "z": -320.0}
+# L_NATURAL = 355
+L_NATURAL = 355  # [m] Natural length: no stretch
 XACC = 1e-4
 
 MAXIT_P0_SOLVER = 100
 MAXIT_RTSAFE = 200
 
 h_span = abs(FP_COORDS["z"] - AP_COORDS["z"])
-L_APFP = math.sqrt((FP_COORDS["x"] - AP_COORDS["x"])**2 +
-                   (FP_COORDS["y"] - AP_COORDS["y"])**2)
+L_APFP = math.sqrt(
+    (FP_COORDS["x"] - AP_COORDS["x"])**2 +
+    (FP_COORDS["y"] - AP_COORDS["y"])**2)
 
 _current_p0_for_funcd = 0.0
 
 # ========= Forced Vibration Settings ===========
-AMP_FL = 2.0 
+AMP_FL = 1
 PERIOD_FL = 20.0 
 OMEGA_FL = 2.0*math.pi / PERIOD_FL
 
@@ -45,9 +47,9 @@ LineDryMass = 54.75 # [kg/m]
 WaterRho = 1025.0 # [kg/m³]
 RHO_LINE = 47.5609 # [kg/m]
 g = 9.80665
-CONTACT_DIAMETER = 0.01 # [m]
+CONTACT_DIAMETER = 0.18 # [m]
 STRUCT_DAMP_RATIO = 0.000
-POISSON_RATIO = 0.5
+POISSON_RATIO = 0.0
 P_ATMOSPHERIC = 101325.0
 
 # ============= Fluid Force Parameters =============
@@ -55,30 +57,32 @@ RHO_WATER = 1025.0  # Seawater density [kg/m³]
 KINEMATIC_VISCOSITY = 1.35e-6  # Kinematic viscosity [m²/s]
 
 # Mooring line fluid force coefficients
-CD_NORMAL = 2.6
-CD_AXIAL = 1.4
+# CD_NORMAL = 2.6
+# CD_AXIAL = 1.4
+CD_NORMAL = 1.0
+CD_AXIAL = 1.0
 CLIFT = 0.0
 DIAM_DRAG_NORMAL = 0.05
 DIAM_DRAG_AXIAL  = 0.01592
 
 CM_NORMAL = 1.0
-CM_TANGENTIAL = 0.5
+CM_TANGENTIAL = 1.0
 
 CA_NORMAL_X = 1.0
 CA_NORMAL_Y = 1.0  
 CA_AXIAL_Z = 0.5
-CM_NORMAL_X = 1.0
-CM_NORMAL_Y = 1.0
-CM_AXIAL_Z = 0.5
+CM_NORMAL_X = 2.0
+CM_NORMAL_Y = 2.0
+CM_AXIAL_Z = 1.5
 
 # Current settings: Linear approximation : No use for vs_OrcaFlex
-CURRENT_SURFACE = 0.5 # Surface current velocity [m/s]
-CURRENT_BOTTOM = 0.1 # Bottom current velocity [m/s]
+CURRENT_SURFACE = 0.0 # Surface current velocity [m/s]
+CURRENT_BOTTOM = 0.0 # Bottom current velocity [m/s]
 CURRENT_DIRECTION = 0.0  # Current direction [deg]
 
 # Wave conditions
-WAVE_HEIGHT = 4.0  # [m]
-WAVE_PERIOD = 8.0  # [s]
+WAVE_HEIGHT = 0.0  # [m]
+WAVE_PERIOD = 20.0  # [s]
 WAVE_LENGTH = (g*WAVE_PERIOD**2) / (2*math.pi)  # Wave length [m]
 WAVE_DIRECTION = 0.0  # Wave direction [deg] Checked
 WATER_DEPTH = 320.0  # Water depth [m]
@@ -101,11 +105,11 @@ SMOOTH_CLEARANCE = 0.01
 SMOOTH_EPS = 0.01
 
 # ====== Time Integration Parameters ======
-DT = 0.001
-T_STATIC = 20.0  # Static equilibrium time
-T_END = 500.0  # Total analysis time
-RAYLEIGH_ALPHA = 0.07854  # [1/s]
-RAYLEIGH_BETA = 0.12732  # [s]
+DT = 0.0005
+T_STATIC = 200.0  # Static equilibrium time
+T_END = 1000.0  # Total analysis time
+RAYLEIGH_ALPHA = 0.0  # [1/s]
+RAYLEIGH_BETA = 0.0 # [s]
 
 class DirectionalEffectiveMassCalculator:
     
@@ -490,6 +494,7 @@ for i_node in range(1, num_internal_nodes + 1):
 print(f"[Complete] Number of internal nodes: {len(internal_nodes_coords_final)}")
 
 # ============= ノード，セグメントの設定 =============
+
 nodes_xyz0 = [FP_COORDS] + internal_nodes_coords_final + [AP_COORDS]
 num_nodes = len(nodes_xyz0)
 num_segs = num_nodes - 1
@@ -633,6 +638,7 @@ def compute_rayleigh_damping_forces(nodes, segments):
 
     return f_damp
 
+# checked
 def froude_krylov_force(seg_vector, diameter, fluid_acc):
     seg_length = np.linalg.norm(seg_vector)
     if seg_length < 1e-12:
@@ -731,8 +737,7 @@ def drag_force_advanced(seg_vector, seg_length, diam_normal, diam_axial, rel_vel
     
     return Fd_n + Fd_t
 
-EXCLUDE_FLUID_FORCE_NODES = [0, -1]
-
+EXCLUDE_FLUID_FORCE_NODES = []
 
 def calculate_advanced_morison_forces(nodes, segments, t):
     f_node = [np.zeros(3) for _ in nodes]
@@ -779,6 +784,7 @@ def calculate_advanced_morison_forces(nodes, segments, t):
         )
         
         F_total = F_FK + F_AM + F_drag
+        # F_total = F_FK + F_drag
         
         if i not in EXCLUDE_FLUID_FORCE_NODES:
             f_node[i] += 0.5 * F_total
@@ -792,8 +798,8 @@ def calculate_advanced_morison_forces(nodes, segments, t):
 # ============= 軸力 =============
 # ====================================================
 
+
 def calculate_external_pressure(z_coord):
-    """外部圧力（水圧）計算"""
     depth = abs(min(0.0, z_coord))
     return P_ATMOSPHERIC + WaterRho * g * depth
 
@@ -811,7 +817,7 @@ def axial_forces(nodes, segments):
 
         mid_z = 0.5 * (pos_i[2] + pos_j[2])
         Po = calculate_external_pressure(mid_z)
-        Ao = math.pi * (LineDiameter / 2)**2
+        Ao = 0.25 * math.pi * (LineDiameter)**2
         poisson_effect = -2.0 * POISSON_RATIO * Po * Ao
         pressure_term = Po * Ao
 
@@ -828,10 +834,9 @@ def axial_forces(nodes, segments):
         strain_rate = dl_dt / seg["L0"]
 
         if strain > 0:  # 引張のみ
-            F_elastic = seg["EA"] * strain
+            F_elastic = seg["EA"] * strain + (Po * Ao)
         else:
             F_elastic = 0.0 
-        # F_elastic = seg["EA"] * strain
         
         F_strain_rate_damping = seg["EA"] * STRUCT_DAMP_RATIO * strain_rate
 
@@ -904,9 +909,9 @@ def calculate_segment_seabed_forces(nodes, seg, diameter):
     else:
         F_fric_lat = np.zeros(2)
 
-    F_norm_vec   = np.array([0.0, 0.0, F_normal])
-    F_fric_vec   = np.array([F_fric_lat[0], F_fric_lat[1], 0.0])
-    F_total      = F_norm_vec + F_fric_vec
+    F_norm_vec = np.array([0.0, 0.0, F_normal])
+    F_fric_vec = np.array([F_fric_lat[0], F_fric_lat[1], 0.0])
+    F_total = F_norm_vec + F_fric_vec
     
     f_i = 0.5 * F_total
     f_j = 0.5 * F_total
@@ -1130,4 +1135,3 @@ for idx, rows in node_traj.items():
                         "acceleration_magnitude[m/s2]", "phase", "displacement_from_t20_equilibrium[m]"])
         writer.writerows(rows)
     print(f"[Complete] Node {idx} → {fname}")
-    
