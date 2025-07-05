@@ -1,5 +1,6 @@
-#include "mbconfig.h"
+/* MBDyn Enhanced Catenary Module with Lumped Mass Method */
 
+#include "mbconfig.h"
 #include <cassert>
 #include <cstdio>
 #include <cmath>
@@ -7,1051 +8,1638 @@
 #include <iostream>
 #include <iomanip>
 #include <limits>
-
+#include <vector>
 #include "dataman.h"
 #include "userelem.h"
 #include "module-catenary_lm.h"
 
-#include "elem.h"
-#include "strnode.h"
-#include "drive.h"
-#include "node.h"
-#include "gravity.h"
+// 流体力パラメータ
+static const doublereal RHO_WATER = 1025.0;
+static const doublereal KINEMATIC_VISCOSITY = 1.35e-6;
+static const doublereal CD_NORMAL = 1.2;
+static const doublereal CD_AXIAL = 0.008;
+static const doublereal DIAM_DRAG_NORMAL = 0.05;
+static const doublereal DIAM_DRAG_AXIAL = 0.01592;
+static const doublereal CA_NORMAL_X = 1.0;
+static const doublereal CA_NORMAL_Y = 1.0;
+static const doublereal CA_AXIAL_Z = 0.0;
+static const doublereal CM_NORMAL_X = 2.0;
+static const doublereal CM_NORMAL_Y = 2.0;
+static const doublereal CM_AXIAL_Z = 1.0;
 
-#include <vector>
+// 海流・波浪パラメータ
+static const doublereal CURRENT_SURFACE = 0.0;
+static const doublereal CURRENT_BOTTOM = 0.0;
+static const doublereal CURRENT_DIRECTION = 0.0;
+static const doublereal WAVE_HEIGHT = 0.0;
+static const doublereal WAVE_PERIOD = 10.0;
+static const doublereal WAVE_DIRECTION = 0.0;
+static const doublereal WATER_DEPTH = 320.0;
 
-// ========= 仮想ノード構造 =========
+// 数値計算制限
+static const doublereal MAX_VELOCITY = 1000.0;
+static const doublereal MAX_FORCE = 100.0e9;
+static const doublereal MAX_ACC = 50.0;
+
 struct VirtualNode {
     Vec3 position;
     Vec3 velocity;
     Vec3 acceleration;
     doublereal mass;
+    doublereal effective_mass_x, effective_mass_y, effective_mass_z;
     bool active;
-    doublereal strain_energy;
-
-    VirtualNode() :
-        position(0.0, 0.0, 0.0),
+    
+    VirtualNode() : 
+        position(0.0, 0.0, 0.0), 
         velocity(0.0, 0.0, 0.0),
         acceleration(0.0, 0.0, 0.0),
-        mass(0.0),
-        active(true),
-        strain_energy(0.0)
+        mass(0.0), 
+        effective_mass_x(0.0), effective_mass_y(0.0), effective_mass_z(0.0),
+        active(true) 
     {}
-
-    VirtualNode(const Vec3& pos, doublereal m) :
-        position(pos),
+    
+    VirtualNode(const Vec3& pos, doublereal m) : 
+        position(pos), 
         velocity(0.0, 0.0, 0.0),
         acceleration(0.0, 0.0, 0.0),
-        mass(m),
-        active(true),
-        strain_energy(0.0)
+        mass(m), 
+        effective_mass_x(m), effective_mass_y(m), effective_mass_z(m),
+        active(true) 
     {}
 };
 
-// ========= クラス定義 =========
-class ModuleCatenaryLM : virtual public Elem, public UserDefinedElem
-{
-public: 
-    ModuleCatenaryLM(unsigned uLabel, const DofOwner *pD0, DataManager* pDM, MBDynParser& HP);
+class ModuleCatenaryLM : virtual public Elem, public UserDefinedElem {
+public:
+    ModuleCatenaryLM(unsigned uLabel, const DofOwner *pDO, DataManager* pDM, MBDynParser& HP);
     virtual ~ModuleCatenaryLM(void);
 
     virtual void Output(OutputHandler& OH) const;
     virtual void WorkSpaceDim(integer* piNumRows, integer* piNumCols) const;
-
-    VariableSubMatrixHandler&
-    AssJac(VariableSubMatrixHandler& WorkMat, 
+    
+    VariableSubMatrixHandler& AssJac(
+        VariableSubMatrixHandler& WorkMat,
         doublereal dCoef, 
+        const VectorHandler& XCurr,
+        const VectorHandler& XPrimeCurr
+    );
+
+    SubVectorHandler& AssRes(
+        SubVectorHandler& WorkVec,
+        doublereal dCoef,
         const VectorHandler& XCurr, 
         const VectorHandler& XPrimeCurr
     );
 
-    SubVectorHandler&
-    AssRes(SubVectorHandler& WorkVec, 
-        doublereal dCoef, 
-        const VectorHandler& XCurr, 
-        const VectorHandler& XPrimeCurr
-    );
-
-    virtual void SetValue(DataManager* pDM,
-        VectorHandler& X,
-        VectorHandler& XP,
-        SimulationEntity::Hints* pHints
-    ) override;
-
-    virtual unsigned int iGetNumConnectedNodes(void) const;
-    virtual void SetInitialValue(VectorHandler& X, VectorHandler& XP);
-    virtual std::ostream& Restart(std::ostream& out) const;
+    unsigned int iGetNumPrivData(void) const;
+    int iGetNumConnectedNodes(void) const;
+    void GetConnectedNodes(std::vector<const Node *>& connectedNodes) const;
+    void SetValue(DataManager *pDM, VectorHandler& X, VectorHandler& XP, SimulationEntity::Hints *ph);
+    std::ostream& Restart(std::ostream& out) const;
 
     virtual unsigned int iGetInitialNumDof(void) const;
     virtual void InitialWorkSpaceDim(integer* piNumRows, integer* piNumCols) const;
-    virtual VariableSubMatrixHandler&
-    InitialAssJac(VariableSubMatrixHandler& WorkMat, const VectorHandler& XCurr);
-    virtual SubVectorHandler&
-    InitialAssRes(SubVectorHandler& WorkVec, const VectorHandler& XCurr);
-
-    virtual const Node* pGetNode(unsigned int i) const;
-    virtual Node* pGetNode(unsigned int i);
+    VariableSubMatrixHandler& InitialAssJac(VariableSubMatrixHandler& WorkMat, const VectorHandler& XCurr);
+    SubVectorHandler& InitialAssRes(SubVectorHandler& WorkVec, const VectorHandler& XCurr);
 
 private:
-    doublereal L_orig;
-    doublereal w_orig;
-    doublereal xacc;
-    doublereal APx_orig, APy_orig, APz_orig;
-    doublereal g_gravity_param;
-
-    doublereal MooringEA;
-    doublereal MooringCA;
-    doublereal seabed_z_param;
-    doublereal Kseabed;
-    doublereal Cseabed;
-
-    doublereal RampGravity;
+    const StructNode* g_pNode;
+    double APx, APy, APz;
+    double L_orig;
+    doublereal rho_line;
+    double xacc;
+    doublereal EA;
+    doublereal CA;
+    doublereal line_diameter;
+    doublereal g_gravity;
+    doublereal seabed_z;
+    doublereal K_seabed;
+    doublereal C_seabed;
+    doublereal MU_LATERAL;
+    doublereal MU_AXIAL_STATIC;
+    doublereal V_SLIP_TOL_LATERAL;
+    doublereal SMOOTH_CLEARANCE;
+    doublereal SMOOTH_EPS;
+    doublereal CONTACT_DIAMETER;
+    doublereal STRUCT_DAMP_RATIO;
+    doublereal POISSON_RATIO;
+    doublereal P_ATMOSPHERIC;
+    doublereal RAYLEIGH_ALPHA;
+    doublereal RAYLEIGH_BETA;
     doublereal simulation_time;
     doublereal prev_time;
-
-    DriveOwner FSF_orig;
-    StructDispNode* fairlead_node;
+    doublereal ramp_time;
+    
+    DriveOwner FSF;
     std::vector<VirtualNode> virtual_nodes;
-
-    // セグメント数
-    static const unsigned int Seg_param = 20;
-
-    static double myasinh_local(double val);
-    static double myacosh_local(double val);
-    static void funcd_catenary_local(double x_param, double xacc, double &f_val, double &df_val, double d_geom, double l_geom, double &p0_angle);
-    static double rtsafe_catenary_local(double x1_bounds, double x2_bounds, double xacc, double d_geom, double l_geom, double &p0_angle);
-
+    static const unsigned int NUM_SEGMENTS = 20;
+    
+    // カテナリー理論関数
+    static double myasinh(double X);
+    static double myacosh(double X);
+    static void funcd(double x, double xacc, double &f, double &df, double d, double l, double &p0);
+    static double rtsafe(double x1, double x2, double xacc, double d, double l, double &p0);
+    
     void InitializeVirtualNodesFromCatenary();
-    void UpdateVirtualNodes(doublereal dCoef);
-    doublereal GetGravityRampFactor(doublereal current_time) const;
-    void ComputeCatenaryForces(Vec3& F_mooring, Vec3& M_mooring) const;
-    doublereal ComputeAdaptiveTimeStep() const;
+    doublereal GetRampFactor(doublereal current_time) const;
+    void UpdateVirtualNodesImplicit(doublereal dt, doublereal dCoef);
+    
+    Vec3 ComputeAxialForceImplicit(const Vec3& pos1, const Vec3& pos2, const Vec3& vel1, const Vec3& vel2, doublereal L0, doublereal dCoef) const;
+    Vec3 GetCurrentVelocity(doublereal z_coord, doublereal t) const;
+    void GetWaveVelocityAcceleration(doublereal x, doublereal z, doublereal t, Vec3& velocity, Vec3& acceleration) const;
+    Vec3 ComputeFroudeKrylovForce(const Vec3& seg_vector, doublereal diameter, const Vec3& fluid_acc) const;
+    Vec3 ComputeAddedMassForce(const Vec3& seg_vector, doublereal seg_length, doublereal diameter, const Vec3& structure_acc, const Vec3& fluid_acc) const;
+    Vec3 ComputeDragForceAdvanced(const Vec3& seg_vector, doublereal seg_length, doublereal diam_normal, doublereal diam_axial, const Vec3& rel_vel, doublereal cd_normal, doublereal cd_axial) const;
+    Vec3 ComputeMorisonForcesImplicit(const Vec3& pos1, const Vec3& pos2, const Vec3& vel1, const Vec3& vel2, const Vec3& acc1, const Vec3& acc2, doublereal seg_length, doublereal t, doublereal dCoef) const;
+    Vec3 ComputeRayleighDampingForcesImplicit(unsigned int node_idx, const Vec3& node_vel, doublereal dCoef) const;
+    
+    void CalculateDirectionalEffectiveMasses();
+    void CalculateSegmentAddedMassMatrix(const Vec3& seg_vector, doublereal seg_length, doublereal M_added[3][3]) const;
+    doublereal CalculateExternalPressure(doublereal z_coord) const;
+    void GetLocalCoordinateSystem(const Vec3& seg_vector, Vec3& t_vec, Vec3& n1_vec, Vec3& n2_vec) const;
+    doublereal SmoothSeabedForce(doublereal raw_penetration, doublereal K, doublereal seg_length, doublereal radius, doublereal clearance, doublereal eps) const;
+    doublereal GetCurrentTime() const;
+    doublereal GetSeabedZ(doublereal x_coord) const;
+    doublereal GetSeabedPenetration(const Vec3& node_pos, doublereal diameter) const;
+    bool IsSegmentOnSeabed(const Vec3& pos1, const Vec3& pos2, doublereal diameter) const;
+    Vec3 ComputeSegmentSeabedForces(const Vec3& pos1, const Vec3& pos2, const Vec3& vel1, const Vec3& vel2, doublereal seg_length, doublereal dCoef) const;
+    bool CheckNumericalStability() const;
 };
 
-// ========= コンストラクタ（.usr ファイル形式に対応） =========
+// コンストラクタ
 ModuleCatenaryLM::ModuleCatenaryLM(
     unsigned uLabel,
-    const DofOwner *pD0,
-    DataManager* pDM,
+    const DofOwner *pDO, 
+    DataManager* pDM, 
     MBDynParser& HP
 )
-    : Elem(uLabel, flag(0)), UserDefinedElem(uLabel, pD0),
-        fairlead_node(nullptr),    
-        L_orig(0.0),
-        w_orig(0.0),
+    : Elem(uLabel, flag(0)), UserDefinedElem(uLabel, pDO), 
+        g_pNode(0), 
+        APx(0), APy(0), APz(0),
+        L_orig(0), 
+        rho_line(77.71), 
         xacc(1e-4),
-        APx_orig(0.0), APy_orig(0.0), APz_orig(0.0),
-        MooringEA(1.0e3),
-        MooringCA(1.0e2),
-        g_gravity_param(9.80665),
-        seabed_z_param(-320.0),
-        Kseabed(1.0e3),
-        Cseabed(1.0e1),
-        RampGravity(10.0),
-        simulation_time(0.0),
-        prev_time(0.0)
+        EA(3.842e8), CA(0.0),
+        line_diameter(0.09017),
+        g_gravity(9.80665),
+        seabed_z(-320.0), K_seabed(1.0e6), C_seabed(0.0),
+        MU_LATERAL(0.0), MU_AXIAL_STATIC(0.0), V_SLIP_TOL_LATERAL(1.0e-5),
+        SMOOTH_CLEARANCE(0.01), SMOOTH_EPS(0.01),
+        CONTACT_DIAMETER(0.18),
+        STRUCT_DAMP_RATIO(0.000), 
+        POISSON_RATIO(0.0), 
+        P_ATMOSPHERIC(101325.0),
+        RAYLEIGH_ALPHA(0.0), RAYLEIGH_BETA(0.0),
+        simulation_time(0.0), prev_time(0.0), ramp_time(10.0)
 {
     if (HP.IsKeyWord("help")) {
         silent_cout(
             "\n"
-            "Module:     ModuleCatenaryLM\n"
-            "Usage:      catenary_lm, \n"
-            "                fairlead_node_label,\n"
-            "                LineLength, total_length,\n"
-            "                LineWeight, unit_weight,\n"
-            "                Xacc, rtsafe_accuracy,\n"
-            "                APx, APy, APz,\n"
-            "              [ EA, axial_stiffness, ]\n"
-            "              [ CA, axial_damping, ]\n"
-            "              [ gravity, g, ]\n"
-            "              [ seabed, z, base_z, k, stiffness, c, damping, ]\n"
-            "              [ force scale factor, (DriveCaller), ]\n"
-            "              [ output, (FLAG) ] ;\n"
+            "Module: ModuleCatenaryLM (Enhanced Lumped Mass Method)\n"
+            "Usage: catenary_lm, fairlead_node_label, \n"
+            "           LineLength, total_length,\n"
+            "           LineWeight, unit_weight,\n"
+            "           Xacc, rtsafe_accuracy,\n"
+            "           APx, APy, APz,\n"
+            "           EA, axial_stiffness,\n"
+            "           CA, axial_damping,\n"
+            "         [ line_diameter, diameter, ]\n"
+            "         [ gravity, g_acceleration, ]\n"
+            "         [ seabed, z_coordinate, k_stiffness, c_damping, ]\n"
+            "         [ ramp_time, ramp_duration, ]\n"
+            "         [ force scale factor, (DriveCaller), ]\n"
+            "         [ output, (FLAG) ] ;\n"
             "\n"
             << std::endl
         );
+
         if (!HP.IsArg()) {
             throw NoErr(MBDYN_EXCEPT_ARGS);
         }
     }
 
-    // .usr ファイル形式のパラメータ読み込み
-    unsigned int fairlead_node_label = HP.GetInt();
+    g_pNode = dynamic_cast<const StructNode *>(pDM->ReadNode(HP, Node::STRUCTURAL));
     L_orig = HP.GetReal();
-    w_orig = HP.GetReal();
+    rho_line = HP.GetReal();
     xacc = HP.GetReal();
-    APx_orig = HP.GetReal();
-    APy_orig = HP.GetReal();
-    APz_orig = HP.GetReal();
-    MooringEA= HP.GetReal();
-    MooringCA = HP.GetReal();
-    g_gravity_param = HP.GetReal();
-    seabed_z_param = HP.GetReal();
-    Kseabed = HP.GetReal();
-    Cseabed = HP.GetReal();
+    APx = HP.GetReal();
+    APy = HP.GetReal();
+    APz = HP.GetReal();
+    EA = HP.GetReal();
+    CA = HP.GetReal();
 
-    // Force Scale Factor
-    if (HP.IsKeyWord("force" "scale" "factor")) {
-        FSF_orig.Set(HP.GetDriveCaller());
+    if (HP.IsKeyWord("line_diameter")) {
+        line_diameter = HP.GetReal();
+    }
+    if (HP.IsKeyWord("gravity")) {
+        g_gravity = HP.GetReal();
+    }
+    if (HP.IsKeyWord("seabed")) {
+        seabed_z = HP.GetReal();
+        K_seabed = HP.GetReal();
+        C_seabed = HP.GetReal();
+    }
+    if (HP.IsKeyWord("ramp_time")) {
+        ramp_time = HP.GetReal();
+    }
+
+    if (HP.IsKeyWord("Force" "scale" "factor")) {
+        FSF.Set(HP.GetDriveCaller());
     } else {
-        FSF_orig.Set(new OneDriveCaller);
+        FSF.Set(new OneDriveCaller);
     }
 
     SetOutputFlag(pDM->fReadOutput(HP, Elem::LOADABLE));
 
-    // フェアリーダーノード取得
-    Node* rawNode = pDM->pFindNode(Node::STRUCTURAL, fairlead_node_label);
-    if (rawNode == nullptr) {
-        throw ErrGeneric(MBDYN_EXCEPT_ARGS);
-    }
-    fairlead_node = dynamic_cast<StructDispNode*>(rawNode);
-    if (fairlead_node == nullptr) {
-        throw ErrGeneric(MBDYN_EXCEPT_ARGS);
-    }
-
-    // 仮想ノード初期化
-    virtual_nodes.resize(Seg_param - 1);
+    virtual_nodes.resize(NUM_SEGMENTS - 1);
+    doublereal segment_mass = (rho_line * L_orig) / static_cast<doublereal>(NUM_SEGMENTS);
     
-    doublereal segment_length = L_orig / static_cast<doublereal>(Seg_param);
-    doublereal node_mass = (w_orig / g_gravity_param) * segment_length;
-
     for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
-        virtual_nodes[i].mass = node_mass;
+        virtual_nodes[i].mass = segment_mass;
+        virtual_nodes[i].effective_mass_x = segment_mass;
+        virtual_nodes[i].effective_mass_y = segment_mass;
+        virtual_nodes[i].effective_mass_z = segment_mass;
         virtual_nodes[i].active = true;
+        virtual_nodes[i].position = Vec3(0.0, 0.0, 0.0);
+        virtual_nodes[i].velocity = Vec3(0.0, 0.0, 0.0);
+        virtual_nodes[i].acceleration = Vec3(0.0, 0.0, 0.0);
     }
 
-    // カテナリー理論による初期位置設定
-    InitializeVirtualNodesFromCatenary();
-
-    pDM->GetLogFile() << "ModuleCatenaryLM (" << GetLabel() << ") initialized :" << std::endl;
-    pDM->GetLogFile() << "  Fairlead Node Label: " << fairlead_node_label << std::endl;
-    pDM->GetLogFile() << "  Anchor: (" << APx_orig << ", " << APy_orig << ", " << APz_orig << ")" << std::endl;
-    pDM->GetLogFile() << "  Length: " << L_orig << ", Weight: " << w_orig << std::endl;
-    pDM->GetLogFile() << "  Segments: " << Seg_param << std::endl;
-    pDM->GetLogFile() << "  EA: " << MooringEA << ", CA: " << MooringCA << std::endl;
-    pDM->GetLogFile() << "  Virtual Nodes: " << virtual_nodes.size() << std::endl;
-}
-
-ModuleCatenaryLM::~ModuleCatenaryLM(void) {}
-
-// ====== 重力ランプ係数計算 =======
-doublereal ModuleCatenaryLM::GetGravityRampFactor(doublereal current_time) const {
-    if (current_time >= RampGravity) {
-        return 1.0;
-    } else if (current_time <= 0.0) {
-        return 0.0;
-    } else {
-        return 0.5*(1.0 - std::cos(3.14159 * current_time / RampGravity));
+    try {
+        InitializeVirtualNodesFromCatenary();
+        CalculateDirectionalEffectiveMasses();
+    } catch (const std::exception& e) {
+        const Vec3& FP = g_pNode->GetXCurr();
+        Vec3 AP(APx, APy, APz);
+        
+        for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+            doublereal ratio = static_cast<doublereal>(i + 1) / static_cast<doublereal>(NUM_SEGMENTS);
+            virtual_nodes[i].position = AP + (FP - AP) * ratio;
+            
+            doublereal sag = 0.05 * L_orig * ratio * (1.0 - ratio);
+            virtual_nodes[i].position += Vec3(0.0, 0.0, -sag);
+        }
+        
+        CalculateDirectionalEffectiveMasses();
     }
+
+    pDM->GetLogFile() << "catenary_lm: " << uLabel << " "
+        << "Segments: " << NUM_SEGMENTS << " "
+        << "VirtualNodes: " << virtual_nodes.size() << " "
+        << "EA: " << EA << " "
+        << "Enhanced fluid forces enabled" << std::endl;
 }
 
-// ========= カテナリー理論関数 =========
-double ModuleCatenaryLM::myasinh_local(double val) { 
-    return std::log(val + std::sqrt(val * val + 1.)); 
+ModuleCatenaryLM::~ModuleCatenaryLM(void) {
+    NO_OP;
 }
 
-double ModuleCatenaryLM::myacosh_local(double val) { 
-    if (val < 1.0) val = 1.0; 
-    return std::log(val + std::sqrt(val * val - 1.));
+// カテナリー理論関数
+double ModuleCatenaryLM::myasinh(double X) {
+    return std::log(X + std::sqrt(X * X + 1));
 }
 
-// ========= カテナリー関数 =========
-void ModuleCatenaryLM::funcd_catenary_local(double x_param, double xacc, double &f_val, double &df_val, double d_geom, double l_geom, double &p0_angle) {
-    int i, max;
+double ModuleCatenaryLM::myacosh(double X) {
+    return std::log(X + std::sqrt(X + 1) * std::sqrt(X - 1));
+}
+
+void ModuleCatenaryLM::funcd(
+    double x, double xacc, double& f, double& df, double d, double l, double& p0
+) {
+    int max = 1000;
     double f1, df1;
-    max = 1000;
 
-    // 係留索が完全にたるんでいて，水平張力 0
-    if (x_param == 0.0) {
-        f_val = -d_geom;
-        df_val = 0.0;
-        p0_angle = 0.0;
-        return;
+    if(x == 0.0) {
+        f = -d;
+        df = 0.0;
+        p0 = 0.0;
     }
-
-    // 水平張力あり
-    if (x_param > 0.0) {
-
-        // 全長が垂直距離以下という物理的にあり得ない状況だが，特定の計算方法
-        if (l_geom <= 1.0) {
-            double x_1 = 1.0/x_param + 1.0;
-            f_val = x_param * myacosh_local(x_1) - std::sqrt(1.0 + 2.0*x_param) + 1.0 - d_geom;
-            df_val = myacosh_local(x_1) - 1.0/std::sqrt(1.0 + 2.0*x_param) - 1.0/(x_param*std::sqrt(std::pow(x_1, 2.0) - 1.0));
-            p0_angle = 0.0;
+    else if(x > 0.0) {
+        if(l <= 0.0) {
+            double X_1 = 1.0/x + 1.0;
+            f = x*myacosh(X_1) - std::sqrt(1.0 + 2.0*x) + 1.0 - d;
+            df = myacosh(X_1) - 1.0/std::sqrt(1.0 + 2.0*x) - 1.0/(x*std::sqrt(std::pow(X_1, 2.0) - 1.0));
+            p0 = 0.0;
         } else {
-
-            // 海底に接する可能性のあるケース
-            if (x_param > (l_geom*l_geom - 1.0) / 2.0) {
-                p0_angle = 0.0;
-                for (int i = 1; i < max; i++) {
-                    double func1 = 1.0/x_param + 1.0/std::cos(p0_angle);
-
-                    f1 = x_param*(std::sqrt(std::pow(func1, 2.0) - 1.0) - std::tan(p0_angle)) - l_geom;
-                    df1 = x_param*(func1*std::tan(p0_angle)*(1.0/std::cos(p0_angle))/std::sqrt(std::pow(func1, 2.0) - 1.0) - std::pow(std::tan(p0_angle), 2.0) - 1.0);
-                    p0_angle = p0_angle - f1/df1;
+            if(x > (l*l - 1.0)/2) {
+                p0 = 0.0;
+                for(int i = 1; i < max; i++) {
+                    double func1 = 1.0/x + 1.0/cos(p0);
                     
-                    // 収束判定
-                    func1 = 1.0/x_param + 1.0/std::cos(p0_angle);
-                    f1 = x_param*(std::sqrt(std::pow(func1, 2.0) - 1.0) - std::tan(p0_angle)) - l_geom;
+                    f1 = x*(std::sqrt(std::pow(func1, 2.0) - 1.0) - std::tan(p0)) - l;
+                    df1 = x*(func1*std::tan(p0)*(1.0/cos(p0))/std::sqrt(std::pow(func1, 2.0) - 1.0) - std::pow(std::tan(p0), 2.0) - 1.0);
+                    p0 = p0 - f1/df1;
+                    
+                    func1 = 1.0/x + 1.0/cos(p0);
+                    f1 = x*(std::sqrt(std::pow(func1, 2.0) - 1.0) - std::tan(p0)) - l;
 
-                    if (std::fabs(f1) < xacc) {
-                        break;
-                    }
+                    if(fabs(f1) < xacc) { break; }
                 }
-                
-                // 収束しなかった場合：エラー
-                if (std::fabs(f1) > xacc) {
-                    std::cout << "ERROR: p0_angle iteration did not converge, fabs(f1) = " << std::fabs(f1) << " > " << xacc << std::endl;
+        
+                if(fabs(f1) > xacc) {
                     throw ErrInterrupted(MBDYN_EXCEPT_ARGS);
                 }
 
-                double x_2 = l_geom/x_param + std::tan(p0_angle);
-                double x_3 = std::tan(p0_angle);
+                double X_2 = l/x + std::tan(p0);
+                double X_3 = std::tan(p0);
 
-                f_val = x_param*(myasinh_local(x_2) - myasinh_local(x_3)) - l_geom + 1.0 - d_geom;
-                df_val = myasinh_local(x_2) - myasinh_local(x_3) - l_geom/(x_param*std::sqrt(std::pow(x_2, 2.0) + 1.0));
+                f = x*(myasinh(X_2) - myasinh(X_3)) - l + 1.0 - d;
+                df = myasinh(X_2) - myasinh(X_3) - l/(x*std::sqrt(std::pow(X_2, 2.0) + 1.0));
             } else {
-
-                // 海底に接触しない場合：単純なカテナリー
-                double x_5 = 1.0/x_param + 1.0;
-
-                f_val = x_param*myacosh_local(x_5) - std::sqrt(1.0 + 2.0*x_param) + 1.0 - d_geom;
-                df_val = myacosh_local(x_5) - 1.0/std::sqrt(1.0 + 2.0*x_param) - 1.0/(x_param*std::sqrt(std::pow(x_5, 2.0) - 1.0));
-                p0_angle = 0.0;
+                double X_5 = 1.0/x + 1.0;
+                f = x*myacosh(X_5) - std::sqrt(1.0 + 2.0*x) + 1.0 - d;
+                df = myacosh(X_5) - 1.0/std::sqrt(1.0 + 2.0*x) - 1.0/(x*std::sqrt(std::pow(X_5, 2.0) - 1.0));
+                p0 = 0.0;
             }
         }
     } else {
-        std::cout << "ERROR: x_param < 0" << std::endl;
         throw ErrInterrupted(MBDYN_EXCEPT_ARGS);
     }
 }
 
-double ModuleCatenaryLM::rtsafe_catenary_local(double x1_bounds, double x2_bounds, double xacc, double d_geom, double l_geom, double &p0_angle) {
+double ModuleCatenaryLM::rtsafe(
+    double x1, double x2, double xacc, double d, double l, double &p0
+) {
     const int MAXIT = 1000;
     int j;
-    double fh, fl, xh, xl, df_val;
-    double dx, dxold, f_val, temp, rts;
+    double fh, fl, xh, xl, df;
+    double dx, dxold, f, temp, rts;
     double p1, p2;
 
-    // 境界での関数値を計算
-    ModuleCatenaryLM::funcd_catenary_local(x1_bounds, xacc, fl, df_val, d_geom, l_geom, p1);
-    ModuleCatenaryLM::funcd_catenary_local(x2_bounds, xacc, fh, df_val, d_geom, l_geom, p2);
+    funcd(x1, xacc, fl, df, d, l, p1);
+    funcd(x2, xacc, fh, df, d, l, p2);
 
-    // fl fh が同符号であれば根が無いため，中断する
-    if ((fl > 0.0 && fh > 0.0) || (fl < 0.0 && fh < 0.0)) {
-        std::cout << "ERROR: Root is not bracketed. fl = " << fl << ", fh = " << fh << std::endl;
+    if((fl > 0.0 && fh > 0.0) || (fl < 0.0 && fh < 0.0)) {
         throw ErrInterrupted(MBDYN_EXCEPT_ARGS);
     }
 
-    // fl または fh が 0 であれば x1 x2 が既に根であるため，その値を返す
-    if (fl == 0.0) {
-        p0_angle = p1;
-        return x1_bounds;
+    if(fl == 0.0) {
+        p0 = p1;
+        return x1;
     }
-    if (fh == 0.0) {
-        p0_angle = p2;
-        return x2_bounds;
+    if(fh == 0.0) {
+        p0 = p2;
+        return x2;
     }
 
-    // f(xl) < 0 かつ f(xh) > 0 を満たすように根を含む区間の下限 xl と根を含む区間の上限 xh を設定
-    if (fl < 0.0) {
-        xl = x1_bounds;
-        xh = x2_bounds;
+    if(fl < 0.0) {
+        xl = x1;
+        xh = x2;
     } else {
-        xh = x1_bounds;
-        xl = x2_bounds;
+        xh = x1;
+        xl = x2;
     }
 
-    // 根の初期推定値は中点とする
-    rts = 0.5*(x1_bounds + x2_bounds);
-    dxold = std::fabs(x2_bounds - x1_bounds);  // 修正: x2_bounds - x2_bounds -> x2_bounds - x1_bounds
+    rts = 0.5*(x1 + x2);
+    dxold = std::fabs(x2 - x1);
     dx = dxold;
+    funcd(rts, xacc, f, df, d, l, p0);
 
-    // funcd により初期推定値 rts における関数の値 f_val と微分 df_val を計算する
-    ModuleCatenaryLM::funcd_catenary_local(rts, xacc, f_val, df_val, d_geom, l_geom, p0_angle);
-
-    for (j = 0; j < MAXIT; j++) {
-        // ニュートン法のステップが区間の外に出るかどうか || ニュートン法のステップが二分法のステップよりも効果的かどうか
-        if (((rts - xh)*df_val - f_val)*((rts - xl)*df_val - f_val) > 0.0 || (std::fabs(2.0*f_val)) > std::fabs(dxold*df_val)) {
-            
-            // 二分法を採用した場合
+    for(j = 0; j < MAXIT; j++) {
+        if((((rts - xh)*df - f)*((rts - xl)*df - f) > 0.0) || ((std::fabs(2.0*f)) > std::fabs(dxold*df))) {
             dxold = dx;
             dx = 0.5*(xh - xl);
-            rts = xl + dx;
-            if (xl == rts) {
-                return rts;
-            }
+            rts = xl + dx;    
+            if(xl == rts) { return rts; }
         } else {
-
-            // ニュートン法を採用した場合
             dxold = dx;
-            dx = f_val / df_val;
+            dx = f/df;
             temp = rts;
             rts -= dx;
-            if (temp == rts) {
-                return rts;
-            }
+            if(temp == rts) { return rts; }
         }
 
-        // 収束判定
-        if (std::fabs(dx) < xacc) { 
-            return rts; 
-        }
+        if(std::fabs(dx) < xacc) { return rts; }
 
-        // 新しい推定値 rts で funcd を呼び出し，関数値 f を更新
-        ModuleCatenaryLM::funcd_catenary_local(rts, xacc, f_val, df_val, d_geom, l_geom, p0_angle);
+        funcd(rts, xacc, f, df, d, l, p0);
 
-        // 区間の更新
-        if (f_val < 0.0) {
+        if(f < 0.0) {
             xl = rts;
         } else {
             xh = rts;
         }
     }
 
-    std::cout << "ERROR: Maximum iterations exceeded in bisection method" << std::endl;
     throw ErrInterrupted(MBDYN_EXCEPT_ARGS);
 }
 
-// ========= カテナリー理論による内部ノードの初期位置 =========
+// カテナリー理論による仮想ノード初期化
 void ModuleCatenaryLM::InitializeVirtualNodesFromCatenary() {
-    if (fairlead_node == nullptr || virtual_nodes.empty()) return;
+    if (g_pNode == nullptr || virtual_nodes.empty()) {
+        return;
+    }
 
-    const Vec3& fairlead_pos = fairlead_node->GetXCurr();
-    Vec3 anchor_pos(APx_orig, APy_orig, APz_orig);
+    const Vec3& FP = g_pNode->GetXCurr();
+    Vec3 AP(APx, APy, APz);
+    Vec3 FP_AP = FP - AP;
     
-    // フェアリーダーとアンカー間のベクトル
-    Vec3 FP_AP = fairlead_pos - anchor_pos;
-    doublereal h = FP_AP.dGet(3);  // 垂直距離：符号付き
-    doublereal L_APFP = std::sqrt(std::pow(FP_AP.dGet(1), 2.0) + std::pow(FP_AP.dGet(2), 2.0));
+    doublereal h = std::fabs(FP_AP.dGet(3));
+    doublereal L_APFP = std::sqrt(std::pow(FP_AP.dGet(1), 2) + std::pow(FP_AP.dGet(2), 2));
     
-    // 水平方向の単位ベクトル
-    Vec3 horizontal_dir(1.0, 0.0, 0.0);
+    Vec3 horizontal_unit(1.0, 0.0, 0.0);
     if (L_APFP > 1e-12) {
-        horizontal_dir = Vec3(FP_AP.dGet(1) / L_APFP, FP_AP.dGet(2) / L_APFP, 0.0);
+        horizontal_unit = Vec3(FP_AP.dGet(1)/L_APFP, FP_AP.dGet(2)/L_APFP, 0.0);
     }
 
     bool catenary_success = false;
 
-    // カテナリー理論による計算
-    if (std::fabs(h) > 1e-6 && L_APFP > 1e-6 && L_orig > 1e-6) {
+    if (h > 1e-6 && L_APFP > 1e-6 && L_orig > 1e-6) {
         try {
-
-            // 無次元パラメータの計算
-            doublereal d_geom = (L_APFP - (L_orig - std::fabs(h))) / std::fabs(h);
-            doublereal l_geom = L_orig / std::fabs(h);
+            doublereal L0_APFP = L_orig - h;
+            doublereal delta = L_APFP - L0_APFP;
+            doublereal d = delta / h;
+            doublereal l = L_orig / h;
             
-            // 妥当性チェック
-            if (l_geom > 1.0 && std::fabs(d_geom) < 10.0) {
-                doublereal p0_angle = 0.0;
-                doublereal x_param;
+            if (d > 0 && d < (std::sqrt(l*l - 1) - (l - 1))) {
+                doublereal p0 = 0.0;
+                doublereal x1 = 0.0;
+                doublereal x2 = 1.0e6;
                 
-                // 水平張力パラメータの求解
-                doublereal x1_bounds = 0.001;  // 下限
-                doublereal x2_bounds = 1000.0; // 上限
+                doublereal Ans_x = rtsafe(x1, x2, xacc, d, l, p0);
+                doublereal a = Ans_x * h;
+                doublereal segment_length = L_orig / static_cast<doublereal>(NUM_SEGMENTS);
                 
-                // Newton-Raphson 法で水平張力パラメータを求める
-                x_param = rtsafe_catenary_local(x1_bounds, x2_bounds, xacc, d_geom, l_geom, p0_angle);
-                
-                if (x_param > 1e-12) {
-
-                    doublereal H = x_param * w_orig * std::fabs(h); // 水平張力
-                    doublereal a = H / w_orig;// カテナリーパラメータ
+                for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+                    doublereal s = segment_length * static_cast<doublereal>(i + 1);
+                    doublereal x_local, z_local;
                     
-                    // ======== 座標系の設定 ========
-                    // アンカーを原点としてフェアリーダー方向を x 正方向とする局所座標系
-                    Vec3 local_origin = anchor_pos;
-                    
-                    // 各仮想ノードの位置を計算
-                    doublereal segment_length = L_orig / static_cast<doublereal>(Seg_param);
-                    
-                    for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
-                        // アンカーからの弧長距離
-                        doublereal s = segment_length * static_cast<doublereal>(i + 1);
-                        
-                        doublereal x_local, z_local;
-                        
-                        // 海底接触の有無による場合分け
-                        if (p0_angle > 1e-6) {
-                            // 海底接触ありの場合
-                            doublereal s_contact = a * std::tan(p0_angle);  // 海底接触開始点までの弧長
-                            
-                            if (s <= s_contact) {
-                                // 海底上の部分
-                                x_local = s;
-                                z_local = seabed_z_param - anchor_pos.dGet(3);
-                            } else {
-                                // カテナリー部分
-                                doublereal s_cat = s - s_contact;  // カテナリー部分の弧長
-                                doublereal beta = s_cat / a;
-                                
-                                // カテナリー方程式
-                                x_local = s_contact + a * myasinh_local(std::sinh(beta));
-                                z_local = (seabed_z_param - anchor_pos.dGet(3)) + a * (std::cosh(beta) - 1.0);
-                            }
+                    if (p0 > 1e-6) {
+                        doublereal s_contact = a * std::tan(p0);
+                        if (s <= s_contact) {
+                            x_local = s;
+                            z_local = seabed_z - AP.dGet(3);
                         } else {
-                            // 海底接触なしの場合：純粋なカテナリー
-                            // アンカー点での接線角度を計算
-                            doublereal theta_0 = -myasinh_local(L_APFP / a - 1.0/x_param);
-                            
-                            // 弧長パラメータ
-                            doublereal beta = s / a + theta_0;
-                            
-                            // カテナリー方程式による座標計算
-                            x_local = a * (std::sinh(beta) - std::sinh(theta_0));
-                            z_local = a * (std::cosh(beta) - std::cosh(theta_0));
+                            doublereal s_cat = s - s_contact;
+                            doublereal beta = s_cat / a;
+                            x_local = s_contact + a * myasinh(std::sinh(beta));
+                            z_local = (seabed_z - AP.dGet(3)) + a * (std::cosh(beta) - 1.0);
                         }
+                    } else {
+                        doublereal theta_0 = -myasinh(L_APFP/a - 1.0/Ans_x);
+                        doublereal beta = s/a + theta_0;
                         
-                        // 局所座標からグローバル座標への変換
-                        Vec3 local_pos(x_local, 0.0, z_local);
-                        virtual_nodes[i].position = local_origin + horizontal_dir * x_local + Vec3(0.0, 0.0, z_local);
-                        virtual_nodes[i].velocity = Vec3(0.0, 0.0, 0.0);
-                        virtual_nodes[i].active = true;
-                        
-                        // 座標の妥当性チェック
-                        if (!std::isfinite(virtual_nodes[i].position.dGet(1)) ||
-                            !std::isfinite(virtual_nodes[i].position.dGet(2)) ||
-                            !std::isfinite(virtual_nodes[i].position.dGet(3))) {
-                            throw ErrGeneric(MBDYN_EXCEPT_ARGS);
-                        }
+                        x_local = a * (std::sinh(beta) - std::sinh(theta_0));
+                        z_local = a * (std::cosh(beta) - std::cosh(theta_0));
                     }
                     
-                    catenary_success = true;
-                    
-                    std::cout << "Catenary initialization successful:" << std::endl;
-                    std::cout << "  H = " << H << " N, a = " << a << " m" << std::endl;
-                    std::cout << "  x_param = " << x_param << ", p0_angle = " << p0_angle << " rad" << std::endl;
-                    std::cout << "  d_geom = " << d_geom << ", l_geom = " << l_geom << std::endl;
+                    virtual_nodes[i].position = AP + horizontal_unit * x_local + Vec3(0.0, 0.0, z_local);
+                    virtual_nodes[i].velocity = Vec3(0.0, 0.0, 0.0);
+                    virtual_nodes[i].active = true;
                 }
+                
+                catenary_success = true;
             }
-        } catch (const std::exception& e) {
-            std::cerr << "Catenary calculation failed: " << e.what() << std::endl;
-            catenary_success = false;
         } catch (...) {
-            std::cerr << "Catenary calculation failed with unknown error" << std::endl;
             catenary_success = false;
         }
     }
 
-    // フォールバック：線形補間（カテナリー計算が失敗した場合）
     if (!catenary_success) {
-        std::cout << "Using linear interpolation fallback for virtual node initialization" << std::endl;
-        
         for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
-            doublereal ratio = static_cast<doublereal>(i + 1) / static_cast<doublereal>(Seg_param);
-            virtual_nodes[i].position = anchor_pos + (fairlead_pos - anchor_pos) * ratio;
+            doublereal ratio = static_cast<doublereal>(i + 1) / static_cast<doublereal>(NUM_SEGMENTS);
+            virtual_nodes[i].position = AP + (FP - AP) * ratio;
             
-            // 軽微な垂れ下がりを追加
-            doublereal sag = 0.05 * L_orig * ratio * (1.0 - ratio);
+            doublereal sag = 0.1 * L_orig * ratio * (1.0 - ratio);
             virtual_nodes[i].position += Vec3(0.0, 0.0, -sag);
             
             virtual_nodes[i].velocity = Vec3(0.0, 0.0, 0.0);
             virtual_nodes[i].active = true;
         }
     }
-
-    // 初期化完了の確認
-    unsigned int active_nodes = 0;
-    for (unsigned int j = 0; j < virtual_nodes.size(); ++j) {
-        const VirtualNode& node = virtual_nodes[j];
-        if (node.active) active_nodes++;
-    }
-    
-    std::cout << "Virtual nodes initialized: " << active_nodes << "/" << virtual_nodes.size() << std::endl;
 }
 
-// ========= 仮想ノード更新 =========
-void ModuleCatenaryLM::UpdateVirtualNodes(doublereal dCoef) {
-    if (virtual_nodes.empty()) return;
-
-    static bool first_call = true;
-    static doublereal last_update_time = 0.0;
+// 流体速度取得
+Vec3 ModuleCatenaryLM::GetCurrentVelocity(doublereal z_coord, doublereal t) const {
+    doublereal depth_ratio = std::abs(z_coord) / WATER_DEPTH;
+    depth_ratio = std::min(1.0, std::max(0.0, depth_ratio));
     
-    if (first_call) {
-        simulation_time = 0.0;
-        last_update_time = 0.0;
-        first_call = false;
+    doublereal current_magnitude = CURRENT_SURFACE * (1.0 - depth_ratio) + CURRENT_BOTTOM * depth_ratio;
+    
+    doublereal current_dir_rad = CURRENT_DIRECTION * M_PI / 180.0;
+    doublereal u_current = current_magnitude * std::cos(current_dir_rad);
+    doublereal v_current = current_magnitude * std::sin(current_dir_rad);
+    doublereal w_current = 0.0;
+    
+    return Vec3(u_current, v_current, w_current);
+}
+
+// 波浪速度・加速度取得
+void ModuleCatenaryLM::GetWaveVelocityAcceleration(
+    doublereal x, doublereal z, doublereal t, 
+    Vec3& velocity, Vec3& acceleration
+) const {
+    doublereal wave_length = (g_gravity * WAVE_PERIOD * WAVE_PERIOD) / (2.0 * M_PI);
+    doublereal k = 2.0 * M_PI / wave_length;
+    doublereal omega = 2.0 * M_PI / WAVE_PERIOD;
+    doublereal amplitude = WAVE_HEIGHT / 2.0;
+    
+    doublereal wave_dir_rad = WAVE_DIRECTION * M_PI / 180.0;
+    doublereal kx = k * std::cos(wave_dir_rad);
+    doublereal ky = k * std::sin(wave_dir_rad);
+    
+    doublereal phase = kx * x + ky * 0.0 - omega * t;
+    
+    doublereal depth_from_surface = std::abs(z);
+    doublereal cosh_factor, sinh_factor;
+    
+    if (depth_from_surface >= WATER_DEPTH) {
+        cosh_factor = std::cosh(k * WATER_DEPTH) / std::sinh(k * WATER_DEPTH);
+        sinh_factor = 1.0 / std::sinh(k * WATER_DEPTH);
     } else {
-        doublereal dt_estimate = 0.001;
-        if (dCoef > 1e-12) {
-            dt_estimate = std::min(0.005, std::max(1e-6, dCoef));
-        }
-        simulation_time += dt_estimate;
+        cosh_factor = std::cosh(k * (WATER_DEPTH - depth_from_surface)) / std::sinh(k * WATER_DEPTH);
+        sinh_factor = std::sinh(k * (WATER_DEPTH - depth_from_surface)) / std::sinh(k * WATER_DEPTH);
     }
-
-    doublereal gravity_factor = GetGravityRampFactor(simulation_time);
-
-    // 適応タイムステップ
-    doublereal dt = ComputeAdaptiveTimeStep();
-    dt = std::min(dt, 0.005);
-    dt = std::max(dt, 1e-6);
-
-    // フェアリーダーとアンカー位置
-    const Vec3& fairlead_pos = fairlead_node->GetXCurr();
-    Vec3 anchor_pos(APx_orig, APy_orig, APz_orig);
-    doublereal segment_length = L_orig / static_cast<doublereal>(Seg_param);
     
-    // 各内部ノードに作用する力の計算
-    for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
-        VirtualNode& node = virtual_nodes[i];
-        if (!node.active) continue;
-
-        Vec3 F_total(0.0, 0.0, 0.0);
-        
-        // 重力
-        Vec3 F_gravity(0.0, 0.0, - node.mass * g_gravity_param * gravity_factor);
-        F_total += F_gravity;
-
-        // 線形減衰
-        doublereal damping_coeff = MooringCA / static_cast<doublereal>(Seg_param);
-        Vec3 F_damping = node.velocity * (- damping_coeff);
-        F_total += F_damping;
-
-        // 弾性復元力：前のノード番号からの影響
-        Vec3 prev_pos = (i == 0) ? fairlead_pos : virtual_nodes[i-1].position;
-        Vec3 dx_prev = node.position - prev_pos;
-        doublereal l_prev = dx_prev.Norm();
-        
-        if (l_prev > 1e-12) {
-            Vec3 unit_prev = dx_prev / l_prev;
-            doublereal strain_prev = (l_prev - segment_length) / segment_length;
-            
-            doublereal spring_force = MooringEA / static_cast<doublereal>(Seg_param);
-            if (std::fabs(strain_prev) > 0.1) {
-                spring_force *= (1.0 + std::fabs(strain_prev) * 0.5);
-            }
-            
-            doublereal F_spring_prev = spring_force * strain_prev;
-            F_total -= unit_prev * F_spring_prev;
-        }
-
-        // 弾性復元力：後ろのノード番号からの影響
-        Vec3 next_pos = (i == virtual_nodes.size() - 1) ? anchor_pos : virtual_nodes[i+1].position;
-        Vec3 dx_next = next_pos - node.position;
-        doublereal l_next = dx_next.Norm();
-        
-        if (l_next > 1e-12) {
-            Vec3 unit_next = dx_next / l_next;
-            doublereal strain_next = (l_next - segment_length) / segment_length;
-            
-            doublereal spring_force = MooringEA / static_cast<doublereal>(Seg_param);
-            if (std::fabs(strain_next) > 0.1) {
-                spring_force *= (1.0 + std::fabs(strain_next) * 0.5);
-            }
-            
-            doublereal F_spring_next = spring_force * strain_next;
-            F_total += unit_next * F_spring_next;
-        }
-
-        // 海底相互作用
-        if (node.position.dGet(3) <= seabed_z_param) {
-            doublereal penetration = seabed_z_param - node.position.dGet(3);
-            
-            // 垂直反力
-            doublereal normal_force = Kseabed * penetration * std::sqrt(std::max(penetration, 0.0));
-            F_total += Vec3(0.0, 0.0, normal_force);
-            
-            // 摩擦力
-            Vec3 vel_horizontal(node.velocity.dGet(1), node.velocity.dGet(2), 0.0);
-            doublereal vel_h_norm = vel_horizontal.Norm();
-            
-            if (vel_h_norm > 1e-6) {
-                doublereal mu = 0.3;  // 摩擦係数
-                doublereal friction_mag = std::min(mu * normal_force, Cseabed * vel_h_norm);
-                F_total -= vel_horizontal * (friction_mag / vel_h_norm);
-            }
-            
-            // 垂直減衰
-            if (virtual_nodes[i].velocity.dGet(3) < 0.0) {
-                F_total += Vec3(0.0, 0.0, - node.velocity.dGet(3) * Cseabed);
-            }
-        }
-
-        // TODO 流体力
-        // waves ファイルから当てる？ Morison 方程式でも当てれる可能性
-
-        // 数値積分（Velocity-Verlet 法）TODO 他に良い方法があれば検討：ここで速度制限を厳しくかけても良いかも
-        if (node.mass > 1e-12) {
-            Vec3 acceleration = F_total / node.mass;
-            
-            // 加速度制限
-            doublereal acc_norm = acceleration.Norm();
-            doublereal max_acc = 20.0 * g_gravity_param;
-            if (acc_norm > max_acc) {
-                acceleration *= (max_acc / acc_norm);
-            }
-            
-            // Velocity-Verlet 更新
-            node.position += node.velocity * dt + node.acceleration * (0.5 * dt * dt);
-            
-            Vec3 new_acceleration = acceleration;
-            node.velocity += (node.acceleration + new_acceleration) * (0.5 * dt);
-            node.acceleration = new_acceleration;
-            
-            // 速度制限
-            doublereal vel_norm = node.velocity.Norm();
-            doublereal max_vel = 50.0;
-            if (vel_norm > max_vel) {
-                node.velocity *= (max_vel / vel_norm);
-            }
-        }
-
-        // 境界条件
-        if (node.position.dGet(3) < seabed_z_param) {
-            node.position = Vec3(
-                node.position.dGet(1),
-                node.position.dGet(2),
-                seabed_z_param
-            );
-            
-            if (node.velocity.dGet(3) < 0.0) {
-                node.velocity = Vec3(
-                    node.velocity.dGet(1) * 0.7,
-                    node.velocity.dGet(2) * 0.7,
-                    0.0
-                );
-            }
-        }
-
-    }
+    doublereal u_wave = amplitude * omega * cosh_factor * std::cos(phase) * std::cos(wave_dir_rad);
+    doublereal v_wave = amplitude * omega * cosh_factor * std::cos(phase) * std::sin(wave_dir_rad);
+    doublereal w_wave = amplitude * omega * sinh_factor * std::sin(phase);
+    
+    doublereal du_dt = -amplitude * omega * omega * cosh_factor * std::sin(phase) * std::cos(wave_dir_rad);
+    doublereal dv_dt = -amplitude * omega * omega * cosh_factor * std::sin(phase) * std::sin(wave_dir_rad);
+    doublereal dw_dt = amplitude * omega * omega * sinh_factor * std::cos(phase);
+    
+    velocity = Vec3(u_wave, v_wave, w_wave);
+    acceleration = Vec3(du_dt, dv_dt, dw_dt);
 }
 
-// ====== カテナリー理論に基づいて FP に作用する力の計算：module-catenary では AssRes の中で計算 ======
-void ModuleCatenaryLM::ComputeCatenaryForces(Vec3& F_mooring, Vec3& M_mooring) const {
-    const Vec3& FP = fairlead_node->GetXCurr();
-    Vec3 AP(APx_orig, APy_orig, APz_orig);
-    
-    Vec3 FP_AP = FP - AP;
-    doublereal h = std::fabs(FP_AP.dGet(3));
-    doublereal L_APFP = std::sqrt(std::pow(FP_AP.dGet(1), 2.0) + std::pow(FP_AP.dGet(2), 2.0));
-    
-    if (h < 1e-6) {
-        F_mooring = Vec3(0.0, 0.0, 0.0);
-        M_mooring = Vec3(0.0, 0.0, 0.0);
+// ローカル座標系取得
+void ModuleCatenaryLM::GetLocalCoordinateSystem(
+    const Vec3& seg_vector, 
+    Vec3& t_vec, Vec3& n1_vec, Vec3& n2_vec
+) const {
+    doublereal seg_length = seg_vector.Norm();
+    if (seg_length < 1e-9) {
+        t_vec = Vec3(1.0, 0.0, 0.0);
+        n1_vec = Vec3(0.0, 1.0, 0.0);
+        n2_vec = Vec3(0.0, 0.0, 1.0);
         return;
     }
     
-    doublereal L0_APFP = L_orig - h;
-    doublereal delta = L_APFP - L0_APFP;
-    doublereal d = delta / h;
-    doublereal l = L_orig / h;
+    t_vec = seg_vector / seg_length;
     
-    doublereal H = 0.0, V = 0.0;
-    doublereal p0 = 0.0;
+    if (std::abs(t_vec.dGet(3)) > 0.99) {
+        n1_vec = Vec3(1.0, 0.0, 0.0);
+        n2_vec = Vec3(0.0, 1.0, 0.0);
+    } else {
+        Vec3 temp_z(0.0, 0.0, 1.0);
+        n1_vec = t_vec.Cross(temp_z);
+        n1_vec = n1_vec / n1_vec.Norm();
+        
+        n2_vec = t_vec.Cross(n1_vec);
+        n2_vec = n2_vec / n2_vec.Norm();
+    }
+}
+
+// フルード・クリロフ力
+Vec3 ModuleCatenaryLM::ComputeFroudeKrylovForce(
+    const Vec3& seg_vector, doublereal diameter, const Vec3& fluid_acc
+) const {
+    doublereal seg_length = seg_vector.Norm();
+    if (seg_length < 1e-12) {
+        return Vec3(0.0, 0.0, 0.0);
+    }
     
-    try {
-        if (d <= 0.0) {
-            H = 0.0;
-            V = w_orig * h;
-        } else if (d >= (std::sqrt(std::max(std::pow(l, 2.0) - 1.0, 0.0)) - (l - 1.0))) {
-            // 係留索が張りきった状態
-            H = MooringEA * delta / L_orig;
-            V = w_orig * L_orig;
-        } else {
-            // カテナリー方程式を解く
-            doublereal x1 = 1e-6;
-            doublereal x2 = 1e6;
-            doublereal Ans_x = rtsafe_catenary_local(x1, x2, xacc, d, l, p0);
-            
-            doublereal S = h * std::sqrt(1.0 + 2.0 * Ans_x);
-            H = Ans_x * w_orig * h;
-            V = w_orig * S;
+    doublereal volume = M_PI * (diameter/2.0) * (diameter/2.0) * seg_length;
+
+    Vec3 t_vec, n1_vec, n2_vec;
+    GetLocalCoordinateSystem(seg_vector, t_vec, n1_vec, n2_vec);
+
+    doublereal fluid_acc_axial_scalar = fluid_acc.Dot(t_vec);
+    Vec3 fluid_acc_axial = t_vec * fluid_acc_axial_scalar;
+    Vec3 fluid_acc_normal = fluid_acc - fluid_acc_axial;
+
+    doublereal fluid_acc_normal_x = fluid_acc_normal.Dot(n1_vec);
+    doublereal fluid_acc_normal_y = fluid_acc_normal.Dot(n2_vec);
+
+    Vec3 F_FK_x = n1_vec * (RHO_WATER * volume * CM_NORMAL_X * fluid_acc_normal_x);
+    Vec3 F_FK_y = n2_vec * (RHO_WATER * volume * CM_NORMAL_Y * fluid_acc_normal_y);
+    Vec3 F_FK_z = t_vec * (RHO_WATER * volume * CM_AXIAL_Z * fluid_acc_axial_scalar);
+
+    return F_FK_x + F_FK_y + F_FK_z;
+}
+
+// 付加質量力
+Vec3 ModuleCatenaryLM::ComputeAddedMassForce(
+    const Vec3& seg_vector, doublereal seg_length, doublereal diameter, 
+    const Vec3& structure_acc, const Vec3& fluid_acc
+) const {
+    doublereal volume = M_PI * (diameter/2.0) * (diameter/2.0) * seg_length;
+    
+    doublereal seg_length_calc = seg_vector.Norm();
+    if (seg_length_calc < 1e-9) {
+        return Vec3(0.0, 0.0, 0.0);
+    }
+    
+    Vec3 t_vec, n1_vec, n2_vec;
+    GetLocalCoordinateSystem(seg_vector, t_vec, n1_vec, n2_vec);
+    
+    Vec3 acc_rel = structure_acc - fluid_acc;
+    
+    doublereal acc_rel_axial_scalar = acc_rel.Dot(t_vec);
+    Vec3 acc_rel_axial = t_vec * acc_rel_axial_scalar;
+    Vec3 acc_rel_normal = acc_rel - acc_rel_axial;
+
+    doublereal acc_normal_x = acc_rel_normal.Dot(n1_vec);
+    doublereal acc_normal_y = acc_rel_normal.Dot(n2_vec);
+    
+    Vec3 F_AM_x = n1_vec * (-RHO_WATER * volume * CA_NORMAL_X * acc_normal_x);
+    Vec3 F_AM_y = n2_vec * (-RHO_WATER * volume * CA_NORMAL_Y * acc_normal_y);
+    Vec3 F_AM_z = t_vec * (-RHO_WATER * volume * CA_AXIAL_Z * acc_rel_axial_scalar);
+
+    return F_AM_x + F_AM_y + F_AM_z;
+}
+
+// 抗力
+Vec3 ModuleCatenaryLM::ComputeDragForceAdvanced(
+    const Vec3& seg_vector, doublereal seg_length, doublereal diam_normal, 
+    doublereal diam_axial, const Vec3& rel_vel, doublereal cd_normal, doublereal cd_axial
+) const {
+    doublereal seg_length_calc = seg_vector.Norm();
+    if (seg_length_calc < 1e-9) {
+        return Vec3(0.0, 0.0, 0.0);
+    }
+    
+    Vec3 t_vec, n1_vec, n2_vec;
+    GetLocalCoordinateSystem(seg_vector, t_vec, n1_vec, n2_vec);
+    
+    doublereal vel_t_scalar = rel_vel.Dot(t_vec);
+    Vec3 vel_t = t_vec * vel_t_scalar;
+    Vec3 vel_n = rel_vel - vel_t;
+    doublereal mag_t = std::abs(vel_t_scalar);
+    doublereal mag_n = vel_n.Norm();
+
+    doublereal area_n = diam_normal * seg_length;
+    doublereal area_t = M_PI * diam_axial * seg_length;
+    
+    Vec3 Fd_n(0.0, 0.0, 0.0);
+    if (mag_n > 1e-6) {
+        Fd_n = vel_n * (0.5 * RHO_WATER * cd_normal * area_n * mag_n);
+    }
+    
+    Vec3 Fd_t(0.0, 0.0, 0.0);
+    if (mag_t > 1e-6) {
+        Fd_t = vel_t * (0.5 * RHO_WATER * cd_axial * area_t * mag_t);
+    }
+    
+    return Fd_n + Fd_t;
+}
+
+// モリソン
+Vec3 ModuleCatenaryLM::ComputeMorisonForcesImplicit(
+    const Vec3& pos1, const Vec3& pos2, 
+    const Vec3& vel1, const Vec3& vel2, 
+    const Vec3& acc1, const Vec3& acc2, 
+    doublereal seg_length, doublereal t, doublereal dCoef
+) const {
+    Vec3 pos_mid = (pos1 + pos2) * 0.5;
+    Vec3 vel_mid = (vel1 + vel2) * 0.5;
+    Vec3 acc_mid = (acc1 + acc2) * 0.5;
+
+    Vec3 seg_vec = pos2 - pos1;
+    doublereal seg_length_calc = seg_vec.Norm();
+    if (seg_length_calc < 1e-9) {
+        return Vec3(0.0, 0.0, 0.0);
+    }
+    
+    Vec3 u_curr = GetCurrentVelocity(pos_mid.dGet(3), t);
+    Vec3 u_wave, a_wave;
+    GetWaveVelocityAcceleration(pos_mid.dGet(1), pos_mid.dGet(3), t, u_wave, a_wave);
+    
+    Vec3 u_fluid = u_curr + u_wave;
+    Vec3 a_fluid = a_wave;
+    
+    Vec3 F_FK = ComputeFroudeKrylovForce(seg_vec, line_diameter, a_fluid);
+    Vec3 F_AM = ComputeAddedMassForce(seg_vec, seg_length, line_diameter, acc_mid, a_fluid);
+
+    doublereal volume = M_PI * (line_diameter/2.0) * (line_diameter/2.0) * seg_length;
+    doublereal m_added_avg = RHO_WATER * volume * (CA_NORMAL_X + CA_NORMAL_Y + CA_AXIAL_Z) / 3.0;
+    Vec3 F_AM_correction = acc_mid * (-m_added_avg * dCoef);
+    F_AM += F_AM_correction;
+    
+    Vec3 u_rel = u_fluid - vel_mid;
+    Vec3 F_drag = ComputeDragForceAdvanced(
+        seg_vec, seg_length, DIAM_DRAG_NORMAL, DIAM_DRAG_AXIAL, 
+        u_rel, CD_NORMAL, CD_AXIAL
+    );
+    
+    return F_FK + F_AM + F_drag;
+}
+
+// 有効質量計算
+void ModuleCatenaryLM::CalculateSegmentAddedMassMatrix(
+    const Vec3& seg_vector, doublereal seg_length, doublereal M_added[3][3]
+) const {
+    doublereal volume = M_PI * (line_diameter/2.0) * (line_diameter/2.0) * seg_length;
+    
+    Vec3 t_vec, n1_vec, n2_vec;
+    GetLocalCoordinateSystem(seg_vector, t_vec, n1_vec, n2_vec);
+    
+    doublereal m_local[3][3] = {
+        {RHO_WATER * volume * CA_NORMAL_X, 0.0, 0.0},
+        {0.0, RHO_WATER * volume * CA_NORMAL_Y, 0.0},
+        {0.0, 0.0, RHO_WATER * volume * CA_AXIAL_Z}
+    };
+    
+    doublereal R[3][3] = {
+        {n1_vec.dGet(1), n2_vec.dGet(1), t_vec.dGet(1)},
+        {n1_vec.dGet(2), n2_vec.dGet(2), t_vec.dGet(2)},
+        {n1_vec.dGet(3), n2_vec.dGet(3), t_vec.dGet(3)}
+    };
+    
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            M_added[i][j] = 0.0;
+            for (int k = 0; k < 3; k++) {
+                for (int l = 0; l < 3; l++) {
+                    M_added[i][j] += R[i][k] * m_local[k][l] * R[j][l];
+                }
+            }
         }
-    } catch (...) {
-        // フォールバック計算
-        H = MooringEA * std::max(0.0, delta) / L_orig * 0.1;
-        V = w_orig * L_orig * 0.5;
+    }
+}
+
+void ModuleCatenaryLM::CalculateDirectionalEffectiveMasses() {
+    if (virtual_nodes.empty()) return;
+    
+    const Vec3& fairlead_pos = g_pNode->GetXCurr();
+    Vec3 anchor_pos(APx, APy, APz);
+    
+    doublereal segment_length = L_orig / static_cast<doublereal>(NUM_SEGMENTS);
+    
+    for (unsigned int k = 0; k < virtual_nodes.size(); ++k) {
+        doublereal M_structure[3][3] = {
+            {virtual_nodes[k].mass, 0.0, 0.0},
+            {0.0, virtual_nodes[k].mass, 0.0},
+            {0.0, 0.0, virtual_nodes[k].mass}
+        };
+        
+        doublereal M_added_total[3][3] = {{0.0}};
+        
+        Vec3 pos_prev, seg_vec_prev;
+        if (k == 0) {
+            pos_prev = fairlead_pos;
+        } else {
+            pos_prev = virtual_nodes[k-1].position;
+        }
+        seg_vec_prev = virtual_nodes[k].position - pos_prev;
+        
+        doublereal M_seg_added_prev[3][3];
+        CalculateSegmentAddedMassMatrix(seg_vec_prev, segment_length, M_seg_added_prev);
+        
+        Vec3 pos_next, seg_vec_next;
+        if (k == virtual_nodes.size() - 1) {
+            pos_next = anchor_pos;
+        } else {
+            pos_next = virtual_nodes[k+1].position;
+        }
+        seg_vec_next = pos_next - virtual_nodes[k].position;
+        
+        doublereal M_seg_added_next[3][3];
+        CalculateSegmentAddedMassMatrix(seg_vec_next, segment_length, M_seg_added_next);
+        
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                M_added_total[i][j] = 0.5 * (M_seg_added_prev[i][j] + M_seg_added_next[i][j]);
+            }
+        }
+        
+        virtual_nodes[k].effective_mass_x = M_structure[0][0] + M_added_total[0][0];
+        virtual_nodes[k].effective_mass_y = M_structure[1][1] + M_added_total[1][1];
+        virtual_nodes[k].effective_mass_z = M_structure[2][2] + M_added_total[2][2];
+        
+        if (virtual_nodes[k].effective_mass_x < 1e-6) virtual_nodes[k].effective_mass_x = virtual_nodes[k].mass + 1e-6;
+        if (virtual_nodes[k].effective_mass_y < 1e-6) virtual_nodes[k].effective_mass_y = virtual_nodes[k].mass + 1e-6;
+        if (virtual_nodes[k].effective_mass_z < 1e-6) virtual_nodes[k].effective_mass_z = virtual_nodes[k].mass + 1e-6;
+    }
+}
+
+// ランプファクター
+doublereal ModuleCatenaryLM::GetRampFactor(doublereal current_time) const {
+    if (current_time <= 0.0) {
+        return 0.0;
+    } else if (current_time >= ramp_time) {
+        return 1.0;
+    } else {
+        return current_time / ramp_time;
+    }
+}
+
+// 軸力計算（陰解法対応）
+Vec3 ModuleCatenaryLM::ComputeAxialForceImplicit(
+    const Vec3& pos1, const Vec3& pos2, const Vec3& vel1, const Vec3& vel2, 
+    doublereal L0, doublereal dCoef
+) const {
+    Vec3 dx = pos2 - pos1;
+    doublereal l_current = dx.Norm();
+    
+    if (l_current < 1e-12) {
+        return Vec3(0.0, 0.0, 0.0);
+    }
+    
+    Vec3 t = dx / l_current;
+    
+    Vec3 mid_pos = (pos1 + pos2) * 0.5;
+    doublereal depth = std::abs(std::min(0.0, mid_pos.dGet(3)));
+    doublereal Po = P_ATMOSPHERIC + RHO_WATER * g_gravity * depth;
+    doublereal Ao = M_PI * (line_diameter * line_diameter);
+    doublereal pressure_term = Po * Ao;
+    doublereal poisson_effect = -2.0 * POISSON_RATIO * Po * Ao;
+    
+    doublereal strain = (l_current - L0) / L0;
+    
+    doublereal F_elastic = 0.0;
+    if (strain > 0.0) {
+        F_elastic = EA * strain + pressure_term;
+    }
+    
+    Vec3 dv = vel2 - vel1;
+    doublereal dl_dt = dx.Dot(dv) / l_current;
+    doublereal strain_rate = dl_dt / L0;
+    doublereal F_strain_rate_damping = EA * STRUCT_DAMP_RATIO * strain_rate;
+    
+    doublereal vrel = dv.Dot(t);
+    doublereal Fd = CA * vrel * (1.0 + dCoef*CA / virtual_nodes[0].mass);
+    
+    doublereal Fax = F_elastic + F_strain_rate_damping + Fd + poisson_effect;
+    Fax = std::max(0.0, std::min(Fax, MAX_FORCE));
+    
+    return t * Fax;
+}
+
+// レイリー減衰力
+Vec3 ModuleCatenaryLM::ComputeRayleighDampingForcesImplicit(
+    unsigned int node_idx, const Vec3& node_vel, doublereal dCoef
+) const {
+    if (node_idx >= virtual_nodes.size()) {
+        return Vec3(0.0, 0.0, 0.0);
+    }
+    
+    doublereal alpha_implicit = RAYLEIGH_ALPHA * (1.0 + dCoef * RAYLEIGH_ALPHA);
+    Vec3 f_mass_damp = node_vel * (-alpha_implicit * virtual_nodes[node_idx].mass);
+    
+    Vec3 f_stiff_damp(0.0, 0.0, 0.0);
+    
+    const Vec3& fairlead_pos = g_pNode->GetXCurr();
+    const Vec3& fairlead_vel = g_pNode->GetVCurr();
+    Vec3 anchor_pos(APx, APy, APz);
+    Vec3 anchor_vel(0.0, 0.0, 0.0);
+    
+    doublereal segment_length = L_orig / static_cast<doublereal>(NUM_SEGMENTS);
+    doublereal K_el = EA / segment_length;
+    doublereal beta_implicit = RAYLEIGH_BETA * (1.0 + dCoef * K_el / virtual_nodes[node_idx].mass);
+    
+    if (node_idx == 0) {
+        Vec3 seg_vec = virtual_nodes[node_idx].position - fairlead_pos;
+        doublereal seg_len = seg_vec.Norm();
+        if (seg_len > 1e-9) {
+            Vec3 t_vec = seg_vec / seg_len;
+            doublereal rel_vel_t = (virtual_nodes[node_idx].velocity - fairlead_vel).Dot(t_vec);
+            doublereal Fd_scalar = RAYLEIGH_BETA * K_el * rel_vel_t;
+            f_stiff_damp += t_vec * Fd_scalar;
+        }
+    } else {
+        Vec3 seg_vec = virtual_nodes[node_idx].position - virtual_nodes[node_idx-1].position;
+        doublereal seg_len = seg_vec.Norm();
+        if (seg_len > 1e-9) {
+            Vec3 t_vec = seg_vec / seg_len;
+            doublereal rel_vel_t = (virtual_nodes[node_idx].velocity - virtual_nodes[node_idx-1].velocity).Dot(t_vec);
+            doublereal Fd_scalar = RAYLEIGH_BETA * K_el * rel_vel_t;
+            f_stiff_damp += t_vec * Fd_scalar;
+        }
+    }
+    
+    if (node_idx == virtual_nodes.size() - 1) {
+        Vec3 seg_vec = anchor_pos - virtual_nodes[node_idx].position;
+        doublereal seg_len = seg_vec.Norm();
+        if (seg_len > 1e-9) {
+            Vec3 t_vec = seg_vec / seg_len;
+            doublereal rel_vel_t = (anchor_vel - virtual_nodes[node_idx].velocity).Dot(t_vec);
+            doublereal Fd_scalar = RAYLEIGH_BETA * K_el * rel_vel_t;
+            f_stiff_damp -= t_vec * Fd_scalar;
+        }
+    } else {
+        Vec3 seg_vec = virtual_nodes[node_idx+1].position - virtual_nodes[node_idx].position;
+        doublereal seg_len = seg_vec.Norm();
+        if (seg_len > 1e-9) {
+            Vec3 t_vec = seg_vec / seg_len;
+            doublereal rel_vel_t = (virtual_nodes[node_idx+1].velocity - virtual_nodes[node_idx].velocity).Dot(t_vec);
+            doublereal Fd_scalar = RAYLEIGH_BETA * K_el * rel_vel_t;
+            f_stiff_damp -= t_vec * Fd_scalar;
+        }
+    }
+    
+    return f_mass_damp + f_stiff_damp;
+}
+
+// 海底関連関数
+doublereal ModuleCatenaryLM::GetSeabedZ(doublereal x_coord) const {
+    return seabed_z;
+}
+
+doublereal ModuleCatenaryLM::GetSeabedPenetration(const Vec3& node_pos, doublereal diameter) const {
+    doublereal x = node_pos.dGet(1);
+    doublereal z = node_pos.dGet(3);
+    doublereal seabed_z_local = GetSeabedZ(x);
+    doublereal penetration = seabed_z_local - z + CONTACT_DIAMETER;
+    return std::max(0.0, penetration);
+}
+
+bool ModuleCatenaryLM::IsSegmentOnSeabed(const Vec3& pos1, const Vec3& pos2, doublereal diameter) const {
+    doublereal pen1 = GetSeabedPenetration(pos1, diameter);
+    doublereal pen2 = GetSeabedPenetration(pos2, diameter);
+    return pen1 > 0.0 && pen2 > 0.0;
+}
+
+doublereal ModuleCatenaryLM::SmoothSeabedForce(
+    doublereal raw_penetration, doublereal K, doublereal seg_length, 
+    doublereal radius, doublereal clearance, doublereal eps
+) const {
+    doublereal p_eff = raw_penetration + clearance + line_diameter/2.0;
+    if (p_eff <= 0.0) {
+        return 0.0;
+    }
+    doublereal K_eff = K * seg_length * radius * p_eff;
+    return K_eff * (std::sqrt(p_eff*p_eff + eps*eps) - eps);
+}
+
+Vec3 ModuleCatenaryLM::ComputeSegmentSeabedForces(
+    const Vec3& pos1, const Vec3& pos2, const Vec3& vel1, const Vec3& vel2, 
+    doublereal seg_length, doublereal dCoef
+) const {
+    Vec3 seg_vec = pos2 - pos1;
+    doublereal seg_length_calc = seg_vec.Norm();
+    if (seg_length_calc < 1e-9) {
+        return Vec3(0.0, 0.0, 0.0);
+    }
+    
+    doublereal radius = line_diameter / 2.0;
+    
+    doublereal seabed_z_local = GetSeabedZ(0.0);
+    doublereal raw_i = seabed_z_local - pos1.dGet(3);
+    doublereal raw_j = seabed_z_local - pos2.dGet(3);
+    doublereal raw_avg = 0.5 * (raw_i + raw_j);
+    
+    doublereal F_normal = SmoothSeabedForce(
+        raw_avg, K_seabed, seg_length, radius, SMOOTH_CLEARANCE, SMOOTH_EPS
+    );
+    if (F_normal < 0.0) {
+        F_normal = 0.0;
     }
 
-    // Force Scale Factor適用
-    doublereal fsf = FSF_orig.dGet();
-    H *= fsf;
-    V *= fsf;
+    doublereal stiffness_correction = 1.0 + dCoef * K_seabed / (virtual_nodes[0].mass + 1e-6);
+    F_normal *= stiffness_correction;
+    
+    Vec3 pos_mid = (pos1 + pos2) * 0.5;
+    Vec3 vel_mid = (vel1 + vel2) * 0.5;
 
-    // 方向計算
-    doublereal dFx = 0.0, dFy = 0.0;
-    if (L_APFP > 1e-12) {
-        doublereal angle = std::atan2(FP_AP.dGet(2), FP_AP.dGet(1));
-        dFx = H * std::cos(angle);
-        dFy = H * std::sin(angle);
+    doublereal damping_correction = 1.0 + dCoef * C_seabed / (virtual_nodes[0].mass + 1e-6);
+    doublereal vel_z_damped = vel_mid.dGet(3) * damping_correction;
+    F_normal -= C_seabed * vel_z_damped;
+    F_normal = std::max(0.0, F_normal);
+    
+    Vec3 vel_lat(vel_mid.dGet(1), vel_mid.dGet(2), 0.0);
+    doublereal mag_lat = vel_lat.Norm();
+    
+    Vec3 F_fric_lat(0.0, 0.0, 0.0);
+    if (mag_lat > V_SLIP_TOL_LATERAL) {
+        doublereal friction_correction = 1.0 + dCoef * 0.1;
+        F_fric_lat = vel_lat * (-MU_LATERAL * F_normal * friction_correction / mag_lat);
+    }
+
+    Vec3 F_norm_vec(0.0, 0.0, F_normal);
+    Vec3 F_fric_vec(F_fric_lat.dGet(1), F_fric_lat.dGet(2), 0.0);
+    
+    return F_norm_vec + F_fric_vec;
+}
+
+// 仮想ノード更新（陰解法）
+void ModuleCatenaryLM::UpdateVirtualNodesImplicit(doublereal dt, doublereal dCoef) {
+    if (virtual_nodes.empty()) return;
+
+    if (dt <= 1e-12 || dt > 0.1) {
+        return;
+    }
+
+    if (g_pNode == nullptr) {
+        return;
+    }
+
+    const Vec3& fairlead_pos = g_pNode->GetXCurr();
+    const Vec3& fairlead_vel = g_pNode->GetVCurr();
+    Vec3 anchor_pos(APx, APy, APz);
+    Vec3 anchor_vel(0.0, 0.0, 0.0);
+    
+    doublereal segment_length = L_orig / static_cast<doublereal>(NUM_SEGMENTS);
+    doublereal ramp_factor = GetRampFactor(simulation_time);
+    
+    CalculateDirectionalEffectiveMasses();
+    
+    for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+        if (!virtual_nodes[i].active) continue;
+        
+        Vec3 F_total(0.0, 0.0, 0.0);
+        
+        Vec3 F_gravity(0.0, 0.0, -virtual_nodes[i].mass * g_gravity * ramp_factor);
+        F_total += F_gravity;
+        
+        Vec3 F_axial_prev(0.0, 0.0, 0.0);
+        if (i == 0) {
+            F_axial_prev = ComputeAxialForceImplicit(
+                fairlead_pos, virtual_nodes[i].position, 
+                fairlead_vel, virtual_nodes[i].velocity, 
+                segment_length, dCoef
+            );
+        } else {
+            F_axial_prev = ComputeAxialForceImplicit(
+                virtual_nodes[i-1].position, virtual_nodes[i].position,
+                virtual_nodes[i-1].velocity, virtual_nodes[i].velocity, 
+                segment_length, dCoef
+            );
+        }
+        F_total += F_axial_prev * ramp_factor;
+        
+        Vec3 F_axial_next(0.0, 0.0, 0.0);
+        if (i == virtual_nodes.size() - 1) {
+            F_axial_next = ComputeAxialForceImplicit(
+                virtual_nodes[i].position, anchor_pos,
+                virtual_nodes[i].velocity, anchor_vel, 
+                segment_length, dCoef
+            );
+        } else {
+            F_axial_next = ComputeAxialForceImplicit(
+                virtual_nodes[i].position, virtual_nodes[i+1].position,
+                virtual_nodes[i].velocity, virtual_nodes[i+1].velocity, 
+                segment_length, dCoef
+            );
+        }
+        F_total -= F_axial_next * ramp_factor;
+        
+        Vec3 F_fluid(0.0, 0.0, 0.0);
+        
+        if (i == 0) {
+            F_fluid += ComputeMorisonForcesImplicit(
+                fairlead_pos, virtual_nodes[i].position,
+                fairlead_vel, virtual_nodes[i].velocity,
+                Vec3(0.0, 0.0, 0.0), virtual_nodes[i].acceleration,
+                segment_length, simulation_time, dCoef
+            ) * 0.5;
+        } else {
+            F_fluid += ComputeMorisonForcesImplicit(
+                virtual_nodes[i-1].position, virtual_nodes[i].position,
+                virtual_nodes[i-1].velocity, virtual_nodes[i].velocity,
+                virtual_nodes[i-1].acceleration, virtual_nodes[i].acceleration,
+                segment_length, simulation_time, dCoef
+            ) * 0.5;
+        }
+        
+        if (i == virtual_nodes.size() - 1) {
+            F_fluid += ComputeMorisonForcesImplicit(
+                virtual_nodes[i].position, anchor_pos,
+                virtual_nodes[i].velocity, anchor_vel,
+                virtual_nodes[i].acceleration, Vec3(0.0, 0.0, 0.0),
+                segment_length, simulation_time, dCoef
+            ) * 0.5;
+        } else {
+            F_fluid += ComputeMorisonForcesImplicit(
+                virtual_nodes[i].position, virtual_nodes[i+1].position,
+                virtual_nodes[i].velocity, virtual_nodes[i+1].velocity,
+                virtual_nodes[i].acceleration, virtual_nodes[i+1].acceleration,
+                segment_length, simulation_time, dCoef
+            ) * 0.5;
+        }
+        
+        F_total += F_fluid * ramp_factor;
+        
+        if (IsSegmentOnSeabed(virtual_nodes[i].position, virtual_nodes[i].position, line_diameter)) {
+            Vec3 F_seabed = ComputeSegmentSeabedForces(
+                virtual_nodes[i].position, virtual_nodes[i].position,
+                virtual_nodes[i].velocity, virtual_nodes[i].velocity,
+                segment_length, dCoef
+            );
+            F_total += F_seabed * ramp_factor;
+        }
+        
+        Vec3 F_rayleigh = ComputeRayleighDampingForcesImplicit(
+            i, virtual_nodes[i].velocity, dCoef
+        );
+        F_total += F_rayleigh;
+        
+        doublereal eff_mass_x = virtual_nodes[i].effective_mass_x * (1.0 + dCoef * RAYLEIGH_ALPHA);
+        doublereal eff_mass_y = virtual_nodes[i].effective_mass_y * (1.0 + dCoef * RAYLEIGH_ALPHA);
+        doublereal eff_mass_z = virtual_nodes[i].effective_mass_z * (1.0 + dCoef * RAYLEIGH_ALPHA);
+
+        Vec3 acceleration_new(
+            F_total.dGet(1) / eff_mass_x,
+            F_total.dGet(2) / eff_mass_y,
+            F_total.dGet(3) / eff_mass_z
+        );
+        
+        doublereal acc_norm = acceleration_new.Norm();
+        doublereal max_acc = MAX_ACC * g_gravity;
+        if (acc_norm > max_acc) {
+            acceleration_new = acceleration_new * (max_acc / acc_norm);
+        }
+        
+        virtual_nodes[i].acceleration = acceleration_new;
+        virtual_nodes[i].velocity += virtual_nodes[i].acceleration * dt;
+        
+        doublereal vel_norm = virtual_nodes[i].velocity.Norm();
+        if (vel_norm > MAX_VELOCITY) {
+            virtual_nodes[i].velocity = virtual_nodes[i].velocity * (MAX_VELOCITY / vel_norm);
+        }
+        
+        virtual_nodes[i].position += virtual_nodes[i].velocity * dt;
+    }
+}
+
+// 数値安定性チェック
+bool ModuleCatenaryLM::CheckNumericalStability() const {
+    for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+        if (!virtual_nodes[i].active) continue;
+        
+        Vec3 pos = virtual_nodes[i].position;
+        if (!std::isfinite(pos.dGet(1)) || !std::isfinite(pos.dGet(2)) || !std::isfinite(pos.dGet(3))) {
+            return false;
+        }
+        
+        Vec3 vel = virtual_nodes[i].velocity;
+        doublereal vel_norm = vel.Norm();
+        if (!std::isfinite(vel_norm) || vel_norm > MAX_VELOCITY * 2.0) {
+            return false;
+        }
+        
+        Vec3 acc = virtual_nodes[i].acceleration;
+        doublereal acc_norm = acc.Norm();
+        if (!std::isfinite(acc_norm) || acc_norm > MAX_ACC * g_gravity * 2.0) {
+            return false;
+        }
+        
+        if (virtual_nodes[i].effective_mass_x <= 0.0 || 
+            virtual_nodes[i].effective_mass_y <= 0.0 || 
+            virtual_nodes[i].effective_mass_z <= 0.0) {
+            return false;
+        }
+        
+        if (!std::isfinite(virtual_nodes[i].effective_mass_x) ||
+            !std::isfinite(virtual_nodes[i].effective_mass_y) ||
+            !std::isfinite(virtual_nodes[i].effective_mass_z)) {
+            return false;
+        }
     }
     
-    // 係留力（フェアリーダーにかかる反力）
-    F_mooring = Vec3(-dFx, -dFy, -V);
-    M_mooring = Vec3(0.0, 0.0, 0.0);
-}
-
-// ========= 適応タイムステップ計算 =========
-doublereal ModuleCatenaryLM::ComputeAdaptiveTimeStep() const {
-    doublereal max_vel = 1e-6;
-    doublereal max_acc = 1e-6;
-    
-    for (const auto& node : virtual_nodes) {
-        if (!node.active) continue;
-        max_vel = std::max(max_vel, node.velocity.Norm());
-        max_acc = std::max(max_acc, node.acceleration.Norm());
+    if (g_pNode != nullptr && !virtual_nodes.empty()) {
+        const Vec3& fairlead_pos = g_pNode->GetXCurr();
+        Vec3 anchor_pos(APx, APy, APz);
+        
+        Vec3 seg1 = virtual_nodes[0].position - fairlead_pos;
+        doublereal len1 = seg1.Norm();
+        doublereal expected_len = L_orig / static_cast<doublereal>(NUM_SEGMENTS);
+        
+        if (len1 > expected_len * 5.0 || len1 < expected_len * 0.2) {
+            return false;
+        }
+        
+        Vec3 seg_last = anchor_pos - virtual_nodes.back().position;
+        doublereal len_last = seg_last.Norm();
+        
+        if (len_last > expected_len * 5.0 || len_last < expected_len * 0.2) {
+            return false;
+        }
     }
     
-    doublereal segment_length = L_orig / static_cast<doublereal>(Seg_param);
-    doublereal sound_speed = std::sqrt(MooringEA / (w_orig / g_gravity_param));
+    if (!std::isfinite(simulation_time) || simulation_time < 0.0) {
+        return false;
+    }
     
-    // CFL条件
-    doublereal dt_cfl = 0.3 * segment_length / sound_speed;
-    
-    // 速度制限
-    doublereal dt_vel = 0.1 * segment_length / max_vel;
-    
-    // 加速度制限
-    doublereal dt_acc = std::sqrt(2.0 * segment_length / max_acc);
-    
-    doublereal dt_min = dt_cfl;
-    if (dt_vel < dt_min) dt_min = dt_vel;
-    if (dt_acc < dt_min) dt_min = dt_acc;
-    if (0.01 < dt_min) dt_min = 0.01;
-    
-    return dt_min;
+    return true;
 }
 
-// ========= MBDyn インターフェース =========
-void ModuleCatenaryLM::WorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
-    *piNumRows = 6;
-    *piNumCols = 6;
+// ユーティリティ関数
+doublereal ModuleCatenaryLM::CalculateExternalPressure(doublereal z_coord) const {
+    doublereal depth = std::abs(std::min(0.0, z_coord));
+    return P_ATMOSPHERIC + RHO_WATER * g_gravity * depth;
 }
 
-unsigned int ModuleCatenaryLM::iGetNumConnectedNodes(void) const {
-    return 1;
+doublereal ModuleCatenaryLM::GetCurrentTime() const {
+    return simulation_time;
 }
 
-unsigned int ModuleCatenaryLM::iGetInitialNumDof(void) const {
-    return 0;
-}
-
-const Node* ModuleCatenaryLM::pGetNode(unsigned int i) const {
-    if (i == 1) return fairlead_node;
-    return nullptr;
-}
-
-Node* ModuleCatenaryLM::pGetNode(unsigned int i) {
-    if (i == 1) return fairlead_node;
-    return nullptr;
-}
-
-void ModuleCatenaryLM::SetInitialValue(VectorHandler& X, VectorHandler& XP) {
-    InitializeVirtualNodesFromCatenary();
-}
-
-// ========= 残差ベクトル : AssRes =========
+// AssRes関数：残差ベクトル計算（メインの力計算）
 SubVectorHandler& ModuleCatenaryLM::AssRes(
     SubVectorHandler& WorkVec,
     doublereal dCoef,
-    const VectorHandler& XCurr,
+    const VectorHandler& XCurr, 
     const VectorHandler& XPrimeCurr
 ) {
-    if (fairlead_node == nullptr) {
-        WorkVec.ResizeReset(0);
-        return WorkVec;
-    }
+    integer iNumRows = 6;
+    WorkVec.ResizeReset(iNumRows);
 
-    WorkVec.ResizeReset(6);
-
-    integer iFirstMomIndex = fairlead_node->iGetFirstMomentumIndex();
+    integer iFirstMomIndex = g_pNode->iGetFirstMomentumIndex();
+    
     for (int iCnt = 1; iCnt <= 6; iCnt++) {
         WorkVec.PutRowIndex(iCnt, iFirstMomIndex + iCnt);
     }
 
-    // 仮想ノード更新
-    try {
-        UpdateVirtualNodes(dCoef);
-    } catch (...) {
-        // 更新失敗時も継続
+    doublereal current_time = GetCurrentTime();
+    doublereal dt = current_time - prev_time;
+    
+    if (dt > 1e-12 && dt < 1.0) {
+        simulation_time = current_time;
+        UpdateVirtualNodesImplicit(dt, dCoef);
+        prev_time = current_time;
     }
 
-    // カテナリー力計算
-    Vec3 F_catenary, M_catenary;
-    ComputeCatenaryForces(F_catenary, M_catenary);
+    doublereal dFSF = FSF.dGet();
+    doublereal ramp_factor = GetRampFactor(current_time);
     
-    // 仮想ノードからの追加力
-    Vec3 F_virtual(0.0, 0.0, 0.0);
+    Vec3 F_total(0.0, 0.0, 0.0);
+    Vec3 M_total(0.0, 0.0, 0.0);
+    
     if (!virtual_nodes.empty() && virtual_nodes[0].active) {
-        const Vec3& fairlead_pos = fairlead_node->GetXCurr();
-        Vec3 dx = virtual_nodes[0].position - fairlead_pos;
-        doublereal l = dx.Norm();
         
-        if (l > 1e-12) {
-            Vec3 t = dx / l;
-            doublereal segment_length = L_orig / static_cast<doublereal>(Seg_param);
-            doublereal strain = (l - segment_length) / segment_length;
-            
-            if (strain > -0.5) {  // 圧縮制限
-                doublereal F_el = MooringEA * strain / static_cast<doublereal>(Seg_param);
-                F_virtual = t * F_el;
-            }
+        const Vec3& fairlead_pos = g_pNode->GetXCurr();
+        const Vec3& fairlead_vel = g_pNode->GetVCurr();
+
+        doublereal segment_length = L_orig / static_cast<doublereal>(NUM_SEGMENTS);
+        
+        // フェアリーダーから最初の仮想ノードへの軸力
+        Vec3 F_axial = ComputeAxialForceImplicit(
+            fairlead_pos, virtual_nodes[0].position,
+            fairlead_vel, virtual_nodes[0].velocity, 
+            segment_length, 
+            dCoef
+        );
+        
+        // フェアリーダーセグメントの流体力
+        Vec3 F_fluid = ComputeMorisonForcesImplicit(
+            fairlead_pos, virtual_nodes[0].position,
+            fairlead_vel, virtual_nodes[0].velocity,
+            Vec3(0.0, 0.0, 0.0), virtual_nodes[0].acceleration,
+            segment_length, current_time, dCoef
+        ) * 0.5;
+        
+        // 海底接触力
+        Vec3 F_seabed(0.0, 0.0, 0.0);
+        if (IsSegmentOnSeabed(fairlead_pos, virtual_nodes[0].position, line_diameter)) {
+            F_seabed = ComputeSegmentSeabedForces(
+                fairlead_pos, fairlead_pos,
+                fairlead_vel, fairlead_vel,
+                segment_length * 0.5, dCoef
+            );
         }
+
+        const Vec3& fairlead_acc = g_pNode->GetXPPCurr();
+        doublereal seg_mass = rho_line * segment_length * 0.5;
+        Vec3 F_inertial = fairlead_acc * (-seg_mass * ramp_factor);
+        
+        // 総合力の計算
+        F_total = (F_axial + F_fluid + F_seabed + F_inertial) * ramp_factor;
+        
+        // モーメントの計算
+        Vec3 r_vec = virtual_nodes[0].position - fairlead_pos;
+        doublereal r_norm = r_vec.Norm();
+        if (r_norm > 1e-6) {
+            M_total = r_vec.Cross(F_axial) * ramp_factor;
+            Vec3 M_fluid = r_vec.Cross(F_axial) * 0.1 * ramp_factor;
+            M_total += M_fluid;
+        } 
+        
+        // 安全性チェック
+        doublereal force_norm = F_total.Norm();
+        if (force_norm > MAX_FORCE) {
+            F_total = F_total * (MAX_FORCE / force_norm);
+        }
+        
+        doublereal moment_norm = M_total.Norm();
+        doublereal max_moment = 1.0e6;
+        if (moment_norm > max_moment) {
+            M_total = M_total * (max_moment / moment_norm);
+        }
+
+        static Vec3 F_prev(0.0, 0.0, 0.0);
+        static Vec3 M_prev(0.0, 0.0, 0.0);
+        
+        F_prev = F_total;
+        M_prev = M_total;
     }
     
-    Vec3 F_total = F_catenary + F_virtual;
-    Vec3 M_total = M_catenary;
-
+    // Force Scale Factor の適用
+    F_total *= dFSF;
+    M_total *= dFSF;
+    
+    // MBDynの残差ベクトルへの追加
     WorkVec.Add(1, F_total);
     WorkVec.Add(4, M_total);
 
     return WorkVec;
 }
 
-// ========= 全体ヤコビアン：AssJac =========
-VariableSubMatrixHandler& ModuleCatenaryLM::AssJac(
-    VariableSubMatrixHandler& WorkMat,
-    doublereal dCoef,
-    const VectorHandler& XCurr,
-    const VectorHandler& XPrimeCurr
-) {
-    if (fairlead_node == nullptr) {
-        WorkMat.SetNullMatrix();
-        return WorkMat;
-    }
-
-    FullSubMatrixHandler& Jac = WorkMat.SetFull();
-    Jac.ResizeReset(6, 6);
-
-    integer iFirstMomIndex = fairlead_node->iGetFirstMomentumIndex();
-    integer iFirstPosIndex = fairlead_node->iGetFirstPositionIndex();
-    
-    for (int i = 0; i < 6; ++i) {
-        Jac.PutRowIndex(i + 1, iFirstMomIndex + i + 1);
-        Jac.PutColIndex(i + 1, iFirstPosIndex + i + 1);
-    }
-
-    // 係留系剛性計算
-    const Vec3& FP = fairlead_node->GetXCurr();
-    Vec3 AP(APx_orig, APy_orig, APz_orig);
-    Vec3 FP_AP = FP - AP;
-    doublereal L_APFP = FP_AP.Norm();
-    
-    if (L_APFP > 1e-12) {
-        // 接線剛性
-        doublereal k_tangent = MooringEA / L_orig;
-        Vec3 n = FP_AP / L_APFP;
-        
-        // 位置剛性マトリックス
-        for (int i = 1; i <= 3; ++i) {
-            for (int j = 1; j <= 3; ++j) {
-                doublereal k_ij = k_tangent * n.dGet(i) * n.dGet(j);
-                
-                // 幾何剛性項
-                if (i == j) {
-                    k_ij += k_tangent * 0.1 * (1.0 - n.dGet(i) * n.dGet(i));
-                }
-                
-                Jac.PutCoef(i, j, k_ij);
-            }
-        }
-    } else {
-        // 対角剛性
-        doublereal k_diag = MooringEA / L_orig * 0.1;
-        for (int i = 1; i <= 3; ++i) {
-            Jac.PutCoef(i, i, k_diag);
-        }
-    }
-
-    // 回転自由度（小さな値で数値安定性確保）
-    for (int i = 4; i <= 6; ++i) {
-        Jac.PutCoef(i, i, 1e-12);
-    }
-
-    return WorkMat;
+// WorkSpaceDim: 作業空間サイズ定義
+void ModuleCatenaryLM::WorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
+    *piNumRows = 6;
+    *piNumCols = 6;
 }
 
-// ========= 初期条件関連 =========
+// Output: 結果出力
+void ModuleCatenaryLM::Output(OutputHandler& OH) const {
+    if (bToBeOutput()) {
+        if (OH.UseText(OutputHandler::LOADABLE)) {
+            const Vec3& FP = g_pNode->GetXCurr();
+            doublereal current_time = GetCurrentTime();
+            
+            OH.Loadable() << GetLabel()
+                << " " << current_time
+                << " " << FP.dGet(1) // フェアリーダー位置
+                << " " << FP.dGet(2)
+                << " " << FP.dGet(3)
+                << " " << virtual_nodes.size()  // 仮想ノード数
+                << " " << GetRampFactor(simulation_time) // ランプファクター
+                << " " << FSF.dGet(current_time)
+                << std::endl;
+            
+            // 詳細な仮想ノード情報も出力
+            for (unsigned int i = 0; i < virtual_nodes.size(); ++i) {
+                if (virtual_nodes[i].active) {
+                    OH.Loadable() << " vnode_" << i 
+                        << " " << virtual_nodes[i].position.dGet(1)
+                        << " " << virtual_nodes[i].position.dGet(2)
+                        << " " << virtual_nodes[i].position.dGet(3)
+                        << " " << virtual_nodes[i].velocity.Norm()
+                        << " " << virtual_nodes[i].acceleration.Norm()
+                        << std::endl;
+                }
+            }
+        }
+    }
+}
+
+// MBDynインターフェース関数群
+unsigned int ModuleCatenaryLM::iGetNumPrivData(void) const {
+    return 0;
+}
+
+int ModuleCatenaryLM::iGetNumConnectedNodes(void) const {
+    return 1;
+}
+
+void ModuleCatenaryLM::GetConnectedNodes(std::vector<const Node *>& connectedNodes) const {
+    connectedNodes.resize(1);
+    connectedNodes[0] = g_pNode;
+}
+
+void ModuleCatenaryLM::SetValue(DataManager *pDM, VectorHandler& X, VectorHandler& XP, SimulationEntity::Hints *ph) {
+    NO_OP;
+}
+
+std::ostream& ModuleCatenaryLM::Restart(std::ostream& out) const {
+    return out << "# ModuleCatenaryLM: not implemented" << std::endl;
+}
+
+unsigned int ModuleCatenaryLM::iGetInitialNumDof(void) const {
+    return 0;
+}
+
 void ModuleCatenaryLM::InitialWorkSpaceDim(integer* piNumRows, integer* piNumCols) const {
     *piNumRows = 0;
     *piNumCols = 0;
 }
 
-SubVectorHandler& ModuleCatenaryLM::InitialAssRes(
-    SubVectorHandler& WorkVec,
-    const VectorHandler& XCurr
-) {
-    WorkVec.ResizeReset(0);
-    return WorkVec;
-}
-
 VariableSubMatrixHandler& ModuleCatenaryLM::InitialAssJac(
-    VariableSubMatrixHandler& WorkMat,
+    VariableSubMatrixHandler& WorkMat, 
     const VectorHandler& XCurr
 ) {
+    ASSERT(0);
     WorkMat.SetNullMatrix();
     return WorkMat;
 }
 
-// ========= 出力 =========
-void ModuleCatenaryLM::Output(OutputHandler& OH) const {
-    if (!bToBeOutput()) return;
-    if (!OH.UseText(OutputHandler::LOADABLE)) return;
+SubVectorHandler& ModuleCatenaryLM::InitialAssRes(
+    SubVectorHandler& WorkVec, 
+    const VectorHandler& XCurr
+) {
+    ASSERT(0);
+    WorkVec.ResizeReset(0);
+    return WorkVec;
+}
 
-    const integer lbl = GetLabel();
+// AssJac関数：ヤコビアン行列計算（陰解法対応）
+VariableSubMatrixHandler& ModuleCatenaryLM::AssJac(
+    VariableSubMatrixHandler& WorkMat,
+    doublereal dCoef, 
+    const VectorHandler& XCurr,
+    const VectorHandler& XPrimeCurr
+) {
+    integer iNumRows = 0;
+    integer iNumCols = 0;
+    WorkSpaceDim(&iNumRows, &iNumCols);
+    
+    FullSubMatrixHandler& WM = WorkMat.SetFull();
+    WM.ResizeReset(iNumRows, iNumCols);
 
-    if (fairlead_node == nullptr) {
-        OH.Loadable() << lbl << " [Error] Node not available" << std::endl;
-        return;
+    integer iFirstPosIndex = g_pNode->iGetFirstPositionIndex();
+    integer iFirstMomIndex = g_pNode->iGetFirstMomentumIndex();
+    
+    for (int iCnt = 1; iCnt <= 6; iCnt++) {
+        WM.PutRowIndex(iCnt, iFirstMomIndex + iCnt);
+        WM.PutColIndex(iCnt, iFirstPosIndex + iCnt);
     }
 
-    // フェアリード位置
-    const Vec3& fairlead_pos = fairlead_node->GetXCurr();
+    const Vec3& fairlead_pos = g_pNode->GetXCurr();
+    const Vec3& fairlead_vel = g_pNode->GetVCurr();
     
-    // カテナリー力計算
-    Vec3 F_mooring, M_mooring;
-    ComputeCatenaryForces(F_mooring, M_mooring);
+    if (virtual_nodes.empty() || !virtual_nodes[0].active) {
+        for (int i = 1; i <= 6; i++) {
+            for (int j = 1; j <= 6; j++) {
+                WM.PutCoef(i, j, 0.0);
+            }
+        }
+        return WorkMat;
+    }
+
+    doublereal segment_length = L_orig / static_cast<doublereal>(NUM_SEGMENTS);
+    doublereal ramp_factor = GetRampFactor(GetCurrentTime());
     
-    // 仮想ノードからの追加力
-    Vec3 F_virtual(0.0, 0.0, 0.0);
-    if (!virtual_nodes.empty() && virtual_nodes[0].active) {
-        Vec3 dx = virtual_nodes[0].position - fairlead_pos;
-        doublereal l = dx.Norm();
+    // ========= 位置に対する偏微分（K行列成分） =========
+    Vec3 seg_vec = virtual_nodes[0].position - fairlead_pos;
+    doublereal seg_len = seg_vec.Norm();
+    
+    if (seg_len > 1e-9) {
+        Vec3 t_vec = seg_vec / seg_len;
         
-        if (l > 1e-12) {
-            Vec3 t = dx / l;
-            doublereal segment_length = L_orig / static_cast<doublereal>(Seg_param);
-            doublereal strain = (l - segment_length) / segment_length;
+        doublereal strain = (seg_len - segment_length) / segment_length;
+        doublereal K_tangent = 0.0;
+        
+        if (strain > 0.0) {
+            K_tangent = EA / segment_length;
+            doublereal F_axial_current = EA * strain;
+            doublereal K_geometric = F_axial_current / seg_len;
             
-            if (strain > -0.5) {
-                doublereal F_el = MooringEA * strain / static_cast<doublereal>(Seg_param);
-                F_virtual = t * F_el;
+            for (int i = 1; i <= 3; i++) {
+                for (int j = 1; j <= 3; j++) {
+                    doublereal delta_ij = (i == j) ? 1.0 : 0.0;
+                    
+                    doublereal K_material = K_tangent * t_vec.dGet(i) * t_vec.dGet(j);
+                    doublereal K_geom = K_geometric * (delta_ij - t_vec.dGet(i) * t_vec.dGet(j));
+                    
+                    doublereal K_total = (K_material + K_geom) * ramp_factor;
+                    
+                    WM.PutCoef(i, j, -K_total);
+                }
             }
         }
     }
     
-    Vec3 F_total = F_mooring + F_virtual;
+    // 流体力の線形化項（付加質量による剛性効果）
+    doublereal volume = M_PI * (line_diameter/2.0) * (line_diameter/2.0) * segment_length;
+    doublereal m_added_avg = RHO_WATER * volume * (CA_NORMAL_X + CA_NORMAL_Y + CA_AXIAL_Z) / 3.0;
+    doublereal fluid_stiffness = m_added_avg * ramp_factor * 0.1;
+    
+    for (int i = 1; i <= 3; i++) {
+        WM.IncCoef(i, i, -fluid_stiffness);
+    }
+    
+    // ========= 速度に対する偏微分（C行列成分） =========
+    if (seg_len > 1e-9) {
+        Vec3 t_vec = seg_vec / seg_len;
+        
+        doublereal C_axial = CA * ramp_factor;
+        doublereal C_structural = EA * STRUCT_DAMP_RATIO / segment_length * ramp_factor;
+        doublereal C_total = C_axial + C_structural;
+        
+        doublereal C_implicit = C_total * (1.0 + dCoef * C_total / virtual_nodes[0].mass);
+        
+        for (int i = 1; i <= 3; i++) {
+            for (int j = 1; j <= 3; j++) {
+                doublereal C_ij = C_implicit * t_vec.dGet(i) * t_vec.dGet(j);
+                WM.PutCoef(i, j + 3, -C_ij * dCoef);
+            }
+        }
+    }
+    
+    // 流体減衰の線形化
+    Vec3 u_curr = GetCurrentVelocity(fairlead_pos.dGet(3), GetCurrentTime());
+    Vec3 u_wave, a_wave;
+    GetWaveVelocityAcceleration(
+        fairlead_pos.dGet(1), fairlead_pos.dGet(3), 
+        GetCurrentTime(), u_wave, a_wave
+    );
+    
+    Vec3 u_fluid = u_curr + u_wave;
+    Vec3 vel_rel = u_fluid - fairlead_vel;
+    doublereal vel_rel_norm = vel_rel.Norm();
+    
+    if (vel_rel_norm > 1e-6) {
+        doublereal area_drag = DIAM_DRAG_NORMAL * segment_length;
+        doublereal drag_coeff = 0.5 * RHO_WATER * CD_NORMAL * area_drag * vel_rel_norm * ramp_factor;
+        doublereal drag_implicit = drag_coeff * (1.0 + dCoef * 0.1);
+        
+        for (int i = 1; i <= 3; i++) {
+            WM.IncCoef(i, i + 3, -drag_implicit * dCoef * 0.5);
+        }
+    }
+    
+    // レイリー減衰の寄与
+    doublereal mass_damp = RAYLEIGH_ALPHA * virtual_nodes[0].mass * ramp_factor;
+    doublereal stiff_damp = RAYLEIGH_BETA * EA / segment_length * ramp_factor;
+    doublereal rayleigh_implicit = (mass_damp + stiff_damp) * (1.0 + dCoef * RAYLEIGH_ALPHA);
+    
+    for (int i = 1; i <= 3; i++) {
+        WM.IncCoef(i, i + 3, -rayleigh_implicit * dCoef * 0.5);
+    }
+    
+    // 海底接触がある場合の剛性・減衰寄与
+    if (IsSegmentOnSeabed(fairlead_pos, virtual_nodes[0].position, line_diameter)) {
+        doublereal seabed_stiffness = K_seabed * ramp_factor;
+        doublereal seabed_damping = C_seabed * ramp_factor;
+        
+        doublereal seabed_stiff_implicit = seabed_stiffness * (1.0 + dCoef * seabed_stiffness / virtual_nodes[0].mass);
+        doublereal seabed_damp_implicit = seabed_damping * (1.0 + dCoef * seabed_damping / virtual_nodes[0].mass);
+        
+        WM.IncCoef(3, 3, -seabed_stiff_implicit);
+        WM.IncCoef(3, 6, -seabed_damp_implicit * dCoef);
+    }
+    
+    // ========= 慣性項の寄与（付加質量効果） =========
+    doublereal inertia_correction = m_added_avg * ramp_factor;
+    doublereal inertia_implicit = inertia_correction * (1.0 + dCoef);
+    
+    for (int i = 1; i <= 3; i++) {
+        WM.IncCoef(i, i + 3, -inertia_implicit * dCoef * dCoef);
+    }
+    
+    // ========= Force Scale Factorの寄与 =========
+    doublereal dFSF = FSF.dGet();
+    
+    for (int i = 1; i <= 6; i++) {
+        for (int j = 1; j <= 6; j++) {
+            doublereal current_val = WM.dGetCoef(i, j);
+            WM.PutCoef(i, j, current_val * dFSF);
+        }
+    }
+    
+    // ========= モーメント成分のヤコビアン =========
+    Vec3 r_vec = virtual_nodes[0].position - fairlead_pos;
+    
+    Vec3 F_axial_current = ComputeAxialForceImplicit(
+        fairlead_pos, virtual_nodes[0].position,
+        fairlead_vel, virtual_nodes[0].velocity,
+        segment_length, dCoef
+    );
+    
+    doublereal F_skew[3][3] = {
+        { 0.0, -F_axial_current.dGet(3), F_axial_current.dGet(2)},
+        { F_axial_current.dGet(3), 0.0, -F_axial_current.dGet(1)},
+        {-F_axial_current.dGet(2), F_axial_current.dGet(1), 0.0}
+    };
+    
+    doublereal r_skew[3][3] = {
+        { 0.0, -r_vec.dGet(3), r_vec.dGet(2)},
+        { r_vec.dGet(3), 0.0, -r_vec.dGet(1)},
+        {-r_vec.dGet(2), r_vec.dGet(1), 0.0}
+    };
+    
+    for (int i = 4; i <= 6; i++) {
+        for (int j = 1; j <= 3; j++) {
+            WM.PutCoef(i, j, F_skew[i-4][j-1] * ramp_factor * 0.1 * dFSF);
+        }
+        for (int j = 1; j <= 3; j++) {
+            doublereal moment_force_jac = r_skew[i-4][j-1] * ramp_factor * 0.1;
+            
+            for (int k = 1; k <= 3; k++) {
+                WM.IncCoef(i, k, moment_force_jac * WM.dGetCoef(j, k));
+            }
+            for (int k = 4; k <= 6; k++) {
+                WM.IncCoef(i, k, moment_force_jac * WM.dGetCoef(j, k));
+            }
+        }
+    }
 
-    // 出力: ラベル FP位置(3) 外力(3)
-    OH.Loadable() << lbl << " "
-                  << fairlead_pos.dGet(1) << " "
-                  << fairlead_pos.dGet(2) << " "
-                  << fairlead_pos.dGet(3) << " "
-                  << F_total.dGet(1) << " "
-                  << F_total.dGet(2) << " "
-                  << F_total.dGet(3) << std::endl;
+    return WorkMat;
 }
 
 // ========= モジュール登録 =========
 bool catenary_lm_set(void) {
-#ifdef DEBUG
-    std::cerr << __FILE__ << ":" << __LINE__ << ": bool catenary_lm_set(void)" << std::endl;
-#endif
-    UserDefinedElemRead *rf = new UDERead<ModuleCatenaryLM>; // 新しいクラス名でテンプレート特殊化
+    UserDefinedElemRead *rf = new UDERead<ModuleCatenaryLM>;
+
     if (!SetUDE("catenary_lm", rf)) {
         delete rf;
         return false;
     }
+
     return true;
 }
 
-#ifndef STATIC_MODULES // MBDyn の標準的な動的モジュールロードの仕組み
+#ifndef STATIC_MODULES
+
 extern "C" {
-    int module_init(const char *module_name, void *pdm /*DataManager* */, void *php /* MBDynParser* */) {
-        if (!catenary_lm_set()) { // 新しいセット関数を呼ぶ
-            return -1; // 失敗
+    int module_init(const char *module_name, void *pdm, void *php) {
+        if (!catenary_lm_set()) {
+            silent_cerr("catenary_lm: "
+                "module_init(" << module_name << ") "
+                "failed" << std::endl);
+            return -1;
         }
-        return 0; // 成功
+        return 0;
     }
-} // extern "C"
+}
+
 #endif // ! STATIC_MODULES
