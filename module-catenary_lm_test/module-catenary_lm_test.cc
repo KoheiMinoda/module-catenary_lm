@@ -137,8 +137,8 @@ ModuleCatenaryLM::ModuleCatenaryLM(
         g_pNode(0), 
         APx(0), APy(0), APz(0),
         L(0), w(0), xacc(1e-6),
-        EA(2.525e8), CA(0.0), 
-        rho_line(47.5609), line_diameter(0.0945),
+        EA(3.842e8), CA(0.0), 
+        rho_line(77.71), line_diameter(0.09017),
         g_gravity(9.80665),
         seabed_z(-320.0), K_seabed(1.0e5), C_seabed(1.0e3),
         simulation_time(0.0), prev_time(0.0), ramp_time(10.0)
