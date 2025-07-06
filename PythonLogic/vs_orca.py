@@ -20,7 +20,7 @@ def myacosh(X):
 FP_COORDS = {"x": 5.2, "y": 0.0, "z": -70.0}
 # AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
 AP_COORDS = {"x": 255.2, "y": 0.0, "z": -320.0}
-L_NATURAL = 355
+L_NATURAL = 354.96
 # L_NATURAL = 902.2  # [m] Natural length: no stretch
 XACC = 1e-4
 
@@ -45,10 +45,14 @@ CA_CHAIN = 0.0  # Chain damping coefficient
 LineDiameter = 0.0945 # [m]
 LineDryMass = 54.75 # [kg/m]
 WaterRho = 1025.0 # [kg/m³]
-RHO_LINE = 47.5609 # [kg/m]
+LINE_VOLUME_PER_M = math.pi * (LineDiameter / 2)**2 
+BUOY_MASS_PER_M   = WaterRho * LINE_VOLUME_PER_M 
+RHO_LINE_DRY = LineDryMass
+RHO_LINE_WET = RHO_LINE_DRY - BUOY_MASS_PER_M
+RHO_LINE = RHO_LINE_WET
 g = 9.80665
 CONTACT_DIAMETER = 0.18 # [m]
-STRUCT_DAMP_RATIO = 0.000
+STRUCT_DAMP_RATIO = 0.00054473
 POISSON_RATIO = 0.0
 P_ATMOSPHERIC = 101325.0
 
@@ -57,23 +61,21 @@ RHO_WATER = 1025.0  # Seawater density [kg/m³]
 KINEMATIC_VISCOSITY = 1.35e-6  # Kinematic viscosity [m²/s]
 
 # Mooring line fluid force coefficients
-# CD_NORMAL = 2.6
-# CD_AXIAL = 1.4
-CD_NORMAL = 1.0
-CD_AXIAL = 1.0
+CD_NORMAL = 2.6
+CD_AXIAL = 1.4
+# CD_NORMAL = 1.0
+# CD_AXIAL = 1.0
 CLIFT = 0.0
 DIAM_DRAG_NORMAL = 0.05
 DIAM_DRAG_AXIAL  = 0.01592
 
-CM_NORMAL = 1.0
-CM_TANGENTIAL = 1.0
-
-CA_NORMAL_X = 1.0
-CA_NORMAL_Y = 1.0  
-CA_AXIAL_Z = 0.5
 CM_NORMAL_X = 2.0
 CM_NORMAL_Y = 2.0
 CM_AXIAL_Z = 1.5
+
+CA_NORMAL_X = CM_NORMAL_X - 1.0
+CA_NORMAL_Y = CM_NORMAL_Y - 1.0  
+CA_AXIAL_Z = CM_AXIAL_Z - 1.0
 
 # Current settings: Linear approximation : No use for vs_OrcaFlex
 CURRENT_SURFACE = 0.0 # Surface current velocity [m/s]
@@ -106,7 +108,7 @@ SMOOTH_EPS = 0.01
 
 # ====== Time Integration Parameters ======
 DT = 0.001
-T_STATIC = 80.0  # Static equilibrium time
+T_STATIC = 20.0  # Static equilibrium time
 T_END = 500.0  # Total analysis time
 RAYLEIGH_ALPHA = 0.0  # [1/s]
 RAYLEIGH_BETA = 0.0 # [s]
@@ -505,31 +507,32 @@ segments = []
 for k in range(num_segs):
     xi, xj = nodes_xyz0[k], nodes_xyz0[k+1]
     L_current = math.dist((xi['x'], xi['y'], xi['z']), (xj['x'], xj['y'], xj['z']))
+    struct_mass_seg = RHO_LINE_DRY * L_natural_segment
+    buoy_mass_seg   = BUOY_MASS_PER_M * L_natural_segment
     segments.append({
-        "i": k, "j": k+1, 
+        "i": k, 
+        "j": k+1, 
         "L0": L_natural_segment,
         "L_current": L_current,
-        "EA": EA_CHAIN, "CA": CA_CHAIN,
-        "mass": RHO_LINE * L_natural_segment,
+        "EA": EA_CHAIN, 
+        "CA": CA_CHAIN,
+        "mass": struct_mass_seg, # 慣性用
+        "buoy": buoy_mass_seg, # 浮力用
         "material": "Chain"
     })
 
 print(f"[Complete] Natural segment length: {L_natural_segment:.3f} m")
 print(f"[Complete] Initial state average segment length: {sum([seg['L_current'] for seg in segments])/len(segments):.3f} m")
 
-m_node = [0.0]*num_nodes
+m_node = [0.0]*num_nodes # 乾燥質量
+b_node = [0.0] * num_nodes # 浮力用質量
 for seg in segments:
     m_half = 0.5*seg["mass"]
+    b_half = 0.5 * seg["buoy"]
     m_node[seg["i"]] += m_half
     m_node[seg["j"]] += m_half
-
-"""
-if len(segments) > 0:
-    # フェアリーダー側
-    m_node[0] += 0.5 * segments[0]["mass"]
-    # アンカー側  
-    m_node[-1] += 0.5 * segments[-1]["mass"]
-"""
+    b_node[seg["i"]] += b_half
+    b_node[seg["j"]] += b_half
     
 nodes = []
 for idx, coord in enumerate(nodes_xyz0):
@@ -537,7 +540,8 @@ for idx, coord in enumerate(nodes_xyz0):
         "pos": np.array([coord['x'], coord['y'], coord['z']], dtype=float),
         "vel": np.zeros(3),
         "acc": np.zeros(3),
-        "mass": m_node[idx]
+        "mass": m_node[idx], # 慣性項で使う乾燥質量
+        "buoy": b_node[idx] # 浮力計算で使う
     })
 
 # =============================================================
@@ -798,19 +802,13 @@ def calculate_advanced_morison_forces(nodes, segments, t):
 # ============= 行列ソルバー用の力の計算関数 =============
 
 def calculate_rhs_forces_for_matrix_solver(nodes, segments, t, mass_calculator):
-    """
-    行列ソルバー (M_eff * a = F_rhs) のための右辺の力ベクトル F_rhs を計算する。
-    この関数は、構造物加速度aに依存する付加質量力の項 (-m_added * a) を含めず、
-    流体加速度a_fluidに依存する項 (m_added * a_fluid) のみを力として計算する。
-    """
+
     n_nodes = len(nodes)
     
-    # 1. 軸力、海底接触力、減衰力を計算 (既存の関数を流用)
     f_axial, tensions = axial_forces(nodes, segments)
     f_seabed = seabed_contact_forces_segment_based(nodes, segments, t)
     f_damping = compute_rayleigh_damping_forces(nodes, segments) # 減衰力も追加
 
-    # 2. 流体関連の力を計算 (F_FK, F_drag, m_added * a_fluid)
     f_fluid_rhs = [np.zeros(3) for _ in range(n_nodes)]
     for seg in segments:
         i, j = seg["i"], seg["j"]
@@ -826,25 +824,27 @@ def calculate_rhs_forces_for_matrix_solver(nodes, segments, t, mass_calculator):
             continue
             
         # 流体速度と加速度を取得
-        u_curr = get_current_velocity(pos_mid[2], t)
+        # u_curr = get_current_velocity(pos_mid[2], t)
         u_wave, a_fluid = get_wave_velocity_acceleration(pos_mid[0], pos_mid[2], t)
-        u_fluid = u_curr + u_wave
+        # u_fluid = u_curr + u_wave
+        u_fluid = u_wave
 
-        # (a) Froude-Krylov力を計算
         F_FK = froude_krylov_force(seg_vec, LineDiameter, a_fluid)
         
-        # (b) 抗力を計算
         u_rel = u_fluid - vel_mid
         F_drag = drag_force_advanced(
-            seg_vec, seg_length, DIAM_DRAG_NORMAL, DIAM_DRAG_AXIAL,
-            u_rel, CD_NORMAL, CD_AXIAL
+            seg_vec, 
+            seg_length, 
+            DIAM_DRAG_NORMAL, 
+            DIAM_DRAG_AXIAL,
+            u_rel, 
+            CD_NORMAL, 
+            CD_AXIAL
         )
 
-        # (c) m_added * a_fluid 項を計算
         M_seg_added = mass_calculator.calculate_segment_added_mass_matrix(seg_vec, seg_length)
         F_am_fluid_part = M_seg_added @ a_fluid
 
-        # (d) セグメントの流体力を合計
         F_fluid_seg_total = F_FK + F_drag + F_am_fluid_part
         
         # ノードに力を配分
@@ -853,11 +853,11 @@ def calculate_rhs_forces_for_matrix_solver(nodes, segments, t, mass_calculator):
         if j not in EXCLUDE_FLUID_FORCE_NODES:
             f_fluid_rhs[j] += 0.5 * F_fluid_seg_total
 
-    # 3. すべての力をノードごとに合計する
     force_vectors = []
     for k, node in enumerate(nodes):
-        Fg = np.array([0.0, 0.0, -node["mass"] * g])
-        F_total_rhs = f_axial[k] + f_seabed[k] + f_damping[k] + f_fluid_rhs[k] + Fg
+        Fg = np.array([0.0, 0.0, -node["mass"] * g]) # 重力
+        Fbuoy = np.array([0.0, 0.0,  nodes[k]["buoy"] * g]) # 浮力
+        F_total_rhs = f_axial[k] + f_seabed[k] + f_damping[k] + f_fluid_rhs[k] + Fg + Fbuoy
         force_vectors.append(F_total_rhs)
         
     return force_vectors, tensions
@@ -885,7 +885,7 @@ def axial_forces(nodes, segments):
 
         mid_z = 0.5 * (pos_i[2] + pos_j[2])
         Po = calculate_external_pressure(mid_z)
-        Ao = math.pi * (LineDiameter)**2
+        Ao = 0.25 * math.pi * (0.05)**2
         poisson_effect = -2.0 * POISSON_RATIO * Po * Ao
         pressure_term = Po * Ao
 
@@ -902,7 +902,7 @@ def axial_forces(nodes, segments):
         strain_rate = dl_dt / seg["L0"]
 
         if strain > 0:  # 引張のみ
-            F_elastic = seg["EA"] * strain + (Po*Ao)
+            F_elastic = seg["EA"] * strain # + (Po*Ao)
         else:
             F_elastic = 0.0 
         
@@ -1041,7 +1041,9 @@ def compute_acc(nodes, segments, t):
         acc = []
         for k, node in enumerate(nodes):
             Fg = np.array([0.0, 0.0, -node["mass"]*g])
-            F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg
+            Fbuoy = np.array([0.0, 0.0,  nodes[k]["buoy"] * g])
+
+            F_tot = f_axial[k] + f_seabed[k] + f_fluid[k] + Fg + Fbuoy
 
             m_eff = effective_masses[k]
             a_k = F_tot / m_eff
