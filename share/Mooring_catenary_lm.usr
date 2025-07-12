@@ -1,0 +1,23 @@
+user defined: 50001, catenary_lm,
+	50001,
+    LineLength, 
+	LineWeight, 
+	Xacc,
+    XAP1, YAP1, ZAP1,
+    force scale factor, cosine, InitialTime, pi/ForceRampTime, 0.5, half, 0.;
+
+user defined: 50002, catenary_lm,
+	50002,
+    LineLength, 
+	LineWeight, 
+	Xacc,
+    XAP2, YAP2, ZAP2,
+    force scale factor, cosine, InitialTime, pi/ForceRampTime, 0.5, half, 0.;
+
+user defined: 50003, catenary_lm,
+	50003,
+    LineLength, 
+	LineWeight, 
+	Xacc,
+    XAP3, YAP3, ZAP3,
+    force scale factor, cosine, InitialTime, pi/ForceRampTime, 0.5, half, 0.;
