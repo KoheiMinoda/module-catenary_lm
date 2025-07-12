@@ -1,0 +1,20 @@
+reference : 50001,
+    reference, global,
+         XFP1,  YFP1,  ZFP1,
+    reference, global, eye,
+    reference, global, null,
+    reference, global, null;
+
+reference : 50002,
+    reference, global,
+         XFP2,  YFP2,  ZFP2,
+    reference, global, eye,
+    reference, global, null,
+    reference, global, null;
+
+reference : 50003,
+    reference, global,
+         XFP3,  YFP3,  ZFP3,
+    reference, global, eye,
+    reference, global, null,
+    reference, global, null;
