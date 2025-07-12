@@ -18,8 +18,8 @@ def myacosh(X):
 # FP_COORDS = {"x": 0.0, "y": 0.0, "z": -70.0}
 # AP_COORDS = {"x": 250.0, "y": 0.0, "z": -320.0}
 FP_COORDS = {"x": 5.2, "y": 0.0, "z": -70.0}
-# AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
-AP_COORDS = {"x": 255.2, "y": 0.0, "z": -320.0}
+AP_COORDS = {"x": 853.87, "y": 0.0, "z": -320.0}
+# AP_COORDS = {"x": 255.2, "y": 0.0, "z": -320.0}
 L_NATURAL = 354.96
 # L_NATURAL = 902.2  # [m] Natural length: no stretch
 XACC = 1e-4
