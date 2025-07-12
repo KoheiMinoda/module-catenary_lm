@@ -1,0 +1,92 @@
+# Fairlead Node 1 (static, but its motion refers to platform node 1)
+structural: 50001, static,
+    reference, 1, null,  # 位置はノード "1" に追従
+    reference, 1, eye,   # 姿勢もノード "1" に追従
+    reference, 1, null,  # 速度もノード "1" に追従
+    reference, 1, null;  # 角速度もノード "1" に追従
+
+# --- Virtual Nodes for Line 1 (dynamic) ---
+structural: 51001, dynamic, [42.405860, 0.0, -95.505150], eye, null, null;
+structural: 51002, dynamic, [80.298413, 0.0, -119.978272], eye, null, null;
+structural: 51003, dynamic, [118.872697, 0.0, -143.361901], eye, null, null;
+structural: 51004, dynamic, [158.120069, 0.0, -165.597077], eye, null, null;
+structural: 51005, dynamic, [198.027820, 0.0, -186.623730], eye, null, null;
+structural: 51006, dynamic, [238.578808, 0.0, -206.381140], eye, null, null;
+structural: 51007, dynamic, [279.751124, 0.0, -224.808494], eye, null, null;
+structural: 51008, dynamic, [321.517805, 0.0, -241.845527], eye, null, null;
+structural: 51009, dynamic, [363.846619, 0.0, -257.433240], eye, null, null;
+structural: 51010, dynamic, [406.699943, 0.0, -271.514699], eye, null, null;
+structural: 51011, dynamic, [450.034743, 0.0, -284.035881], eye, null, null;
+structural: 51012, dynamic, [493.802685, 0.0, -294.946562], eye, null, null;
+structural: 51013, dynamic, [537.950379, 0.0, -304.201209], eye, null, null;
+structural: 51014, dynamic, [582.419776, 0.0, -311.759846], eye, null, null;
+structural: 51015, dynamic, [627.148701, 0.0, -317.588865], eye, null, null;
+structural: 51016, dynamic, [672.071540, 0.0, -321.661739], eye, null, null;
+structural: 51017, dynamic, [717.120032, 0.0, -323.959614], eye, null, null;
+structural: 51018, dynamic, [762.224169, 0.0, -324.471730], eye, null, null;
+structural: 51019, dynamic, [807.313165, 0.0, -323.195680], eye, null, null;
+
+# Anchor Node for Line 1 (static, fixed in space)
+structural: 51999, static, [853.87, 0.0, -320.0];
+
+# =================================================================
+# === Mooring Line 2 Nodes
+# =================================================================
+
+# Fairlead Node 2 (references platform node 2)
+structural: 50002, static, reference, 2, null, reference, 2, eye, reference, 2, null, reference, 2, null;
+
+# --- Virtual Nodes for Line 2 ---
+structural: 52001, dynamic, [-21.202930, 36.724552, -95.505150], eye, null, null;
+structural: 52002, dynamic, [-40.149207, 69.540466, -119.978272], eye, null, null;
+structural: 52003, dynamic, [-59.436348, 102.946775, -143.361901], eye, null, null;
+structural: 52004, dynamic, [-79.060034, 136.935996, -165.597077], eye, null, null;
+structural: 52005, dynamic, [-99.013910, 171.497122, -186.623730], eye, null, null;
+structural: 52006, dynamic, [-119.289404, 206.615309, -206.381140], eye, null, null;
+structural: 52007, dynamic, [-139.875562, 242.271580, -224.808494], eye, null, null;
+structural: 52008, dynamic, [-160.758902, 278.442586, -241.845527], eye, null, null;
+structural: 52009, dynamic, [-181.923309, 315.100415, -257.433240], eye, null, null;
+structural: 52010, dynamic, [-203.349971, 352.212482, -271.514699], eye, null, null;
+structural: 52011, dynamic, [-225.017372, 389.741520, -284.035881], eye, null, null;
+structural: 52012, dynamic, [-246.901343, 427.645670, -294.946562], eye, null, null;
+structural: 52013, dynamic, [-268.975190, 465.878694, -304.201209], eye, null, null;
+structural: 52014, dynamic, [-291.209888, 504.390321, -311.759846], eye, null, null;
+structural: 52015, dynamic, [-313.574351, 543.126707, -317.588865], eye, null, null;
+structural: 52016, dynamic, [-336.035770, 582.031027, -321.661739], eye, null, null;
+structural: 52017, dynamic, [-358.560016, 621.044165, -323.959614], eye, null, null;
+structural: 52018, dynamic, [-381.112085, 660.105494, -324.471730], eye, null, null;
+structural: 52019, dynamic, [-403.656583, 699.153710, -323.195680], eye, null, null;
+
+# Anchor Node for Line 2
+structural: 52999, static, [-426.935000, 739.473112, -320.0];
+
+# =================================================================
+# === Mooring Line 3 Nodes
+# =================================================================
+
+# Fairlead Node 3 (references platform node 3)
+structural: 50003, static, reference, 3, null, reference, 3, eye, reference, 3, null, reference, 3, null;
+
+# --- Virtual Nodes for Line 3 ---
+structural: 53001, dynamic, [-21.202930, -36.724552, -95.505150], eye, null, null;
+structural: 53002, dynamic, [-40.149207, -69.540466, -119.978272], eye, null, null;
+structural: 53003, dynamic, [-59.436348, -102.946775, -143.361901], eye, null, null;
+structural: 53004, dynamic, [-79.060034, -136.935996, -165.597077], eye, null, null;
+structural: 53005, dynamic, [-99.013910, -171.497122, -186.623730], eye, null, null;
+structural: 53006, dynamic, [-119.289404, -206.615309, -206.381140], eye, null, null;
+structural: 53007, dynamic, [-139.875562, -242.271580, -224.808494], eye, null, null;
+structural: 53008, dynamic, [-160.758902, -278.442586, -241.845527], eye, null, null;
+structural: 53009, dynamic, [-181.923309, -315.100415, -257.433240], eye, null, null;
+structural: 53010, dynamic, [-203.349971, -352.212482, -271.514699], eye, null, null;
+structural: 53011, dynamic, [-225.017372, -389.741520, -284.035881], eye, null, null;
+structural: 53012, dynamic, [-246.901343, -427.645670, -294.946562], eye, null, null;
+structural: 53013, dynamic, [-268.975190, -465.878694, -304.201209], eye, null, null;
+structural: 53014, dynamic, [-291.209888, -504.390321, -311.759846], eye, null, null;
+structural: 53015, dynamic, [-313.574351, -543.126707, -317.588865], eye, null, null;
+structural: 53016, dynamic, [-336.035770, -582.031027, -321.661739], eye, null, null;
+structural: 53017, dynamic, [-358.560016, -621.044165, -323.959614], eye, null, null;
+structural: 53018, dynamic, [-381.112085, -660.105494, -324.471730], eye, null, null;
+structural: 53019, dynamic, [-403.656583, -699.153710, -323.195680], eye, null, null;
+
+# Anchor Node for Line 3
+structural: 53999, static, [-426.935000, -739.473112, -320.0];
