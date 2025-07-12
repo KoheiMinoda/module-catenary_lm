@@ -11,6 +11,7 @@
 
 
 #include "strnode.h" // 赤線：エディタの設定問題なので無視して OK
+#include "drive.h"
 #include "dofown.h"
 #include "dataman.h" // 赤線：Windows 環境で Unix 系ヘッダを参照しようとしているが，実際は MBDyn 側で条件分岐するので無視で OK
 #include "userelem.h"
