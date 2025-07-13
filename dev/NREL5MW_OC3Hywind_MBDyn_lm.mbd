@@ -1,19 +1,18 @@
 
-# mbdyn -f NREL5MW_OC3Hywind_MBDyn.mbd -o results
+# mbdyn -f NREL5MW_OC3Hywind_MBDyn_lm.mbd -o results
 
 #----------------------- modules --------------------------------------
 
 module load: "/usr/local/mbdyn/libexec/libmodule-spardyn_b1.11.la";
-# module load: "/usr/local/mbdyn/libexec/libmodule-catenary";
 module load: "/usr/local/mbdyn/libexec/libmodule-catenary_lm";
 module load: "/usr/local/mbdyn/libexec/libmodule-aerodyn13_b1.09.la";
 
 #----------------------- variable---------------------------------------
 
 set : real InitialTime		= 0.0;
-set : real FinalTime		= 50.0;
-set : real TimeStep		= 0.001;
-set : real outputTimeStep	= 0.1;
+set : real FinalTime		= 500.0;
+set : real TimeStep		= 0.01;
+set : real outputTimeStep	= 0.2;
 
 #------------------------simulation control ----------------------------
 
@@ -88,29 +87,19 @@ set : real TopVolume_bottom	= 0.5*TopArea_bottom*(Diameter       -Diameter_taper
 #
 
 set : real LineLength		= 902.2; # m
+# set : real LineLength		= 900.0; # m
 set : real LineDiameter		= 0.09017; # m
 set : real LineMass		= 77.71; # kg/m
-set : real LineWeight		= (LineMass-Rho*0.25*pi*LineDiameter^2)*Gravity; # N/m
+set : real LineWeight		= (LineMass-Rho*0.25*pi*LineDiameter^2)*Gravity; #  N/m
+set : real RhoLine = 71.165; # kg/m
 set : real Xacc			= 1.e-4;
-
-# ========== 追加 ===========
-# set: real MooringEA = 5.0e8;
-# set: real MooringCA = 5.0e5;
-# set : real MooringEA = 7.536e9; # 参考
-# set : real MooringCA = 7.536e7;
-set : real MooringEA = 5.0e2;
-set : real MooringCA = 5.0e-1;
-
-set : real MooringSeabedZ = - 320.0;
-# set : real MooringSeabedK = 5.0e6;
-# set : real MooringSeabedC = 5.0e4;
-set : real MooringSeabedK = 5.0e2;
-set : real MooringSeabedC = 1.0e1;
-
 set : real AnchorRadius		= 853.87; # m
 set : real AnchorDepth		= -320.0; # m
 set : real FairleadRadius	= 5.2; # m
 set : real FairleadDepth	= -70.0; # m
+
+set : real EA = 3.842e8; # [N]
+set : real CA = 1.0;
 
 set : real XAP1			= AnchorRadius;
 set : real YAP1			= 0.0;
@@ -200,20 +189,16 @@ begin: initial value;
 
     tolerance: 1.e-3; # 収束判定
     max iterations: 100; # 100 回の残差反復で収束しない場合は打ち切り
-    derivatives tolerance: 1.e-4; # ヤコビアン再計算の判定基準
+    derivatives tolerance: 1.e-3; # ヤコビアン再計算の判定基準
     derivatives max iterations: 100; # 同じ接線を何回使用できるか
 #   derivatives coefficient: 1.e-4;
 
 #   linear solver: naive, colamd, mt, 1; 
     linear solver: umfpack, cc; # 線形化方程式の解法
 
-    nonlinear solver: newton raphson, modified, 10; # 線形行列を 10 ステップごとに更新
+    nonlinear solver: newton raphson, modified, 5; # 線形行列を 10 ステップごとに更新
     threads: assembly, 1;
-    method: ms, .9;
-
-    derivatives coefficient: 1.e-6;
-    derivatives tolerance: 10.0;
-    derivatives max iterations: 500;
+    method: ms, .6;
 
 end: initial value;
 
@@ -238,7 +223,8 @@ begin: control data; # ここで宣言することで MBDyn は先読みして�
                         +1      # Platform nodes (dynamic)：6 自由度
 			+65     # Platform nodes (static)：プラットフォームの外殻など静的節点
 			+3      # Fairlead nodes (static)：各フェアリードの静的節点
-            
+            +19*3 # 仮想ノード数 * 係留索本数
+            +1*3 # アンカーノード数 * 係留索本数
                         +Tower_Nnode # Tower nodes (dynamic)：変数として扱う
                         +10     # Nacelle nodes (Nacelle RotorFurl LSS HSS Generator TeeterPin Hub PitchBearingBottom1~3)：ナセル・ハブ系
                         +3	# Blade PitchPlate (static)：ブレード・ピッチプレート
@@ -276,7 +262,7 @@ begin: control data; # ここで宣言することで MBDyn は先読みして�
     # ここの個数と user elements の個数は合わせる
     loadable elements:
 			+65	# spardyn
-			+3	# catenary
+			+3	# catenary_lm
                         +1      # aerodyn
                         +1      # discon
                         ;
@@ -297,7 +283,6 @@ end: control data;
 #-------------------- Reference ------------------------------------------
 
     include: "./01_Platform3/Platform.ref";
-    # include: "./02_Mooring/Mooring.ref";
     include: "./02_Mooring/Mooring_lm.ref";
     include: "./04_RNA/Nacelle.ref";
     include: "./04_RNA/Blade.ref";
@@ -308,7 +293,6 @@ end: control data;
 begin: nodes;
 
     include: "./01_Platform3/Platform.nod";
-    # include: "./02_Mooring/Mooring.nod";
     include: "./02_Mooring/Mooring_lm.nod";
     include: "./03_Tower/Tower.nod";
     include: "./04_RNA/Nacelle.nod";
@@ -344,8 +328,7 @@ begin: elements;
     #--------------------joints-------------------------------------------
 
     include: "./01_Platform3/Platform_joint.elm";
-    # include: "./02_Mooring/Mooring_joint.elm";
-    include: "./02_Mooring/Mooring_joint_lm.elm";
+    include: "./02_Mooring/Mooring_joint.elm";
     include: "./03_Tower/Tower_joint.elm";
     include: "./04_RNA/Yaw_bearing.jnt";
     include: "./04_RNA/Nacelle.jnt";
@@ -356,7 +339,6 @@ begin: elements;
     #--------------user elements----------------------------------- 
 
     include: "./01_Platform3/Platform_spardyn.usr";
-    # include: "./02_Mooring/Mooring_catenary.usr";
     include: "./02_Mooring/Mooring_catenary_lm.usr";
     include: "./NREL5MW_OC3Hywind_MBDyn_aerodyn13.usr";
     include: "./NREL5MW_OC3Hywind_MBDyn_discon.usr"; 
