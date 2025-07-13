@@ -98,7 +98,8 @@ set : real AnchorDepth		= -320.0; # m
 set : real FairleadRadius	= 5.2; # m
 set : real FairleadDepth	= -70.0; # m
 
-set : real EA = 3.842e8; # [N]
+# set : real EA = 3.842e8; # [N]
+set : real EA = 3.842e7;
 set : real CA = 1.0;
 
 set : real XAP1			= AnchorRadius;
@@ -223,6 +224,8 @@ begin: control data; # ここで宣言することで MBDyn は先読みして�
                         +1      # Platform nodes (dynamic)：6 自由度
 			+65     # Platform nodes (static)：プラットフォームの外殻など静的節点
 			+3      # Fairlead nodes (static)：各フェアリードの静的節点
+            +19*3 # 仮想ノード数 * 係留索本数
+            +1*3 # アンカーノード数 * 係留索本数
                         +Tower_Nnode # Tower nodes (dynamic)：変数として扱う
                         +10     # Nacelle nodes (Nacelle RotorFurl LSS HSS Generator TeeterPin Hub PitchBearingBottom1~3)：ナセル・ハブ系
                         +3	# Blade PitchPlate (static)：ブレード・ピッチプレート
@@ -281,7 +284,7 @@ end: control data;
 #-------------------- Reference ------------------------------------------
 
     include: "./01_Platform3/Platform.ref";
-    include: "./02_Mooring/Mooring.ref";
+    include: "./02_Mooring/Mooring_lm.ref";
     include: "./04_RNA/Nacelle.ref";
     include: "./04_RNA/Blade.ref";
     include: "./04_RNA/Blade_Aero.ref";
@@ -291,7 +294,7 @@ end: control data;
 begin: nodes;
 
     include: "./01_Platform3/Platform.nod";
-    include: "./02_Mooring/Mooring.nod";
+    include: "./02_Mooring/Mooring_lm.nod";
     include: "./03_Tower/Tower.nod";
     include: "./04_RNA/Nacelle.nod";
     include: "./04_RNA/Blade.nod";
@@ -326,7 +329,7 @@ begin: elements;
     #--------------------joints-------------------------------------------
 
     include: "./01_Platform3/Platform_joint.elm";
-    include: "./02_Mooring/Mooring_joint.elm";
+    include: "./02_Mooring/Mooring_joint_lm.elm";
     include: "./03_Tower/Tower_joint.elm";
     include: "./04_RNA/Yaw_bearing.jnt";
     include: "./04_RNA/Nacelle.jnt";
